@@ -1,0 +1,219 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.20.1
+  name: hermesconfigpresets.hermes.nousresearch.io
+spec:
+  group: hermes.nousresearch.io
+  names:
+    kind: HermesConfigPreset
+    listKind: HermesConfigPresetList
+    plural: hermesconfigpresets
+    singular: hermesconfigpreset
+  scope: Namespaced
+  versions:
+  - name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: HermesConfigPreset is the Schema for the hermesconfigpresets
+          API.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: |-
+              HermesConfigPresetSpec is a reusable bundle of defaults deep-merged under a
+              HermesAgent via presetRef (CR wins). See specification §3.2.
+            properties:
+              agent:
+                description: AgentSpec renders into config.yaml `agent:`.
+                properties:
+                  disabledToolsets:
+                    description: disabledToolsets lists platform toolsets to disable.
+                      -> agent.disabled_toolsets
+                    items:
+                      type: string
+                    type: array
+                  maxTurns:
+                    description: maxTurns is the max tool-calling iterations. -> agent.max_turns
+                    format: int32
+                    type: integer
+                  reasoningEffort:
+                    description: reasoningEffort -> agent.reasoning_effort
+                    enum:
+                    - xhigh
+                    - high
+                    - medium
+                    - low
+                    - minimal
+                    - none
+                    type: string
+                type: object
+              compression:
+                description: CompressionSpec renders into config.yaml `compression:`
+                  (hot-reloadable).
+                properties:
+                  enabled:
+                    type: boolean
+                  protectFirstN:
+                    format: int32
+                    type: integer
+                  protectLastN:
+                    format: int32
+                    type: integer
+                  targetRatio:
+                    type: string
+                  threshold:
+                    type: string
+                type: object
+              extraConfig:
+                type: object
+                x-kubernetes-preserve-unknown-fields: true
+              memory:
+                description: MemorySpec renders into config.yaml `memory:`.
+                properties:
+                  memoryEnabled:
+                    type: boolean
+                  userProfileEnabled:
+                    type: boolean
+                type: object
+              model:
+                description: ModelSpec renders into config.yaml `model:`.
+                properties:
+                  baseURL:
+                    description: baseURL overrides the provider endpoint. -> model.base_url
+                    type: string
+                  contextLength:
+                    description: contextLength is the total context window (hot-reloadable).
+                      -> model.context_length
+                    format: int64
+                    type: integer
+                  default:
+                    description: default model name, e.g. anthropic/claude-opus-4.6.
+                      -> model.default
+                    type: string
+                  maxTokens:
+                    description: maxTokens caps output tokens. -> model.max_tokens
+                    format: int64
+                    type: integer
+                  provider:
+                    default: auto
+                    description: provider routing mode. -> model.provider
+                    type: string
+                type: object
+              packages:
+                description: PackagesSpec declares runtime package installation.
+                properties:
+                  apt:
+                    description: apt packages installed at boot as root (NOT persisted
+                      across recreation).
+                    items:
+                      type: string
+                    type: array
+                  brew:
+                    description: brew packages installed to the shared PVC (persisted,
+                      no sudo).
+                    items:
+                      type: string
+                    type: array
+                  homebrewPrefix:
+                    default: /home/linuxbrew/.linuxbrew
+                    description: homebrewPrefix overrides the default Homebrew prefix
+                      on the PVC.
+                    type: string
+                type: object
+              skills:
+                description: SkillsSpec controls skill enablement and operator-provided
+                  custom skills.
+                properties:
+                  creationNudgeInterval:
+                    default: 15
+                    format: int32
+                    type: integer
+                  custom:
+                    description: custom skills written into the PVC and auto-activated.
+                    items:
+                      description: CustomSkill is an operator-shipped skill written
+                        into the PVC and activated.
+                      properties:
+                        enabled:
+                          default: true
+                          type: boolean
+                        inline:
+                          description: inline is the literal SKILL.md content. Mutually
+                            exclusive with sourceRef.
+                          type: string
+                        name:
+                          type: string
+                        sourceRef:
+                          description: |-
+                            sourceRef references a ConfigMap or Secret holding SKILL.md (+files).
+                            Mutually exclusive with inline.
+                          properties:
+                            configMapName:
+                              type: string
+                            secretName:
+                              type: string
+                          type: object
+                      required:
+                      - name
+                      type: object
+                    type: array
+                  disabled:
+                    description: disabled globally disables bundled skills. -> skills.disabled
+                    items:
+                      type: string
+                    type: array
+                  enablePackageManagementSkill:
+                    default: true
+                    description: |-
+                      enablePackageManagementSkill ensures the built-in package-management skill
+                      is present and enabled.
+                    type: boolean
+                  externalDirs:
+                    description: externalDirs are read-only external skill dirs. ->
+                      skills.external_dirs
+                    items:
+                      type: string
+                    type: array
+                  platformDisabled:
+                    additionalProperties:
+                      items:
+                        type: string
+                      type: array
+                    description: platformDisabled disables skills per platform. ->
+                      skills.platform_disabled
+                    type: object
+                type: object
+            type: object
+          status:
+            description: HermesConfigPresetStatus defines the observed state of HermesConfigPreset.
+            properties:
+              observedGeneration:
+                format: int64
+                type: integer
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

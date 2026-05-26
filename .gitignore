@@ -1,0 +1,12 @@
+# OMC orchestration state (transient)
+.omc/
+
+# Go
+bin/
+*.test
+*.out
+vendor/
+
+# Editor / OS
+.DS_Store
+*.swp

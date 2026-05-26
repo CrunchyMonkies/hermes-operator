@@ -1,0 +1,148 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.20.1
+  name: hermeschannels.hermes.nousresearch.io
+spec:
+  group: hermes.nousresearch.io
+  names:
+    kind: HermesChannel
+    listKind: HermesChannelList
+    plural: hermeschannels
+    singular: hermeschannel
+  scope: Namespaced
+  versions:
+  - name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: HermesChannel is the Schema for the hermeschannels API.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: |-
+              HermesChannelSpec is a standalone messaging-platform binding referenced by a
+              HermesAgent (v1beta1 surface; modeled here so the type is stable). v1 uses
+              inline spec.channels. See specification §3.3.
+            properties:
+              enabled:
+                default: true
+                type: boolean
+              ingress:
+                description: ingress is only meaningful when webhookPort > 0.
+                properties:
+                  annotations:
+                    additionalProperties:
+                      type: string
+                    description: |-
+                      annotations are merged verbatim onto the Ingress object (nginx, Traefik,
+                      cert-manager, external-dns, auth, rate-limit, body-size, …).
+                    type: object
+                  className:
+                    description: className maps to spec.ingressClassName on the Ingress.
+                    type: string
+                  enabled:
+                    default: false
+                    description: enabled toggles rendering of an Ingress for this
+                      surface.
+                    type: boolean
+                  host:
+                    description: host is the Ingress host. Required when enabled.
+                    type: string
+                  path:
+                    default: /
+                    description: path is the HTTP path to route to this surface.
+                    type: string
+                  pathType:
+                    default: Prefix
+                    description: pathType is the Kubernetes Ingress path matching
+                      mode.
+                    enum:
+                    - Exact
+                    - Prefix
+                    - ImplementationSpecific
+                    type: string
+                  tls:
+                    description: |-
+                      tls lists TLS blocks rendered onto the Ingress. secretName may reference a
+                      Secret that cert-manager creates later (existence not required at admission).
+                    items:
+                      description: IngressTLS mirrors networkingv1.IngressTLS.
+                      properties:
+                        hosts:
+                          description: hosts included in the TLS certificate.
+                          items:
+                            type: string
+                          type: array
+                        secretName:
+                          description: secretName names the TLS Secret.
+                          type: string
+                      type: object
+                    type: array
+                type: object
+              secretRef:
+                description: secretRef names a Secret whose keys carry the platform
+                  credentials.
+                properties:
+                  name:
+                    default: ""
+                    description: |-
+                      Name of the referent.
+                      This field is effectively required, but due to backwards compatibility is
+                      allowed to be empty. Instances of this type with an empty value here are
+                      almost certainly wrong.
+                      More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                    type: string
+                type: object
+                x-kubernetes-map-type: atomic
+              type:
+                description: type of the messaging platform.
+                enum:
+                - telegram
+                - discord
+                - slack
+                - whatsapp
+                - signal
+                - email
+                - teams
+                - google_chat
+                type: string
+              webhookPort:
+                default: 0
+                description: 'webhookPort: 0 = polling; >0 exposes a port on the Service.'
+                format: int32
+                type: integer
+            required:
+            - type
+            type: object
+          status:
+            description: HermesChannelStatus defines the observed state of HermesChannel.
+            properties:
+              observedGeneration:
+                format: int64
+                type: integer
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

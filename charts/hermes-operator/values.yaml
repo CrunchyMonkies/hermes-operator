@@ -1,0 +1,48 @@
+# Default values for the hermes-operator chart (spec §9.3a).
+
+image:
+  repository: harbor.bne1.ouchi.com.au/applications/hermes-operator
+  tag: ""                       # defaults to .Chart.AppVersion
+  pullPolicy: IfNotPresent
+
+# The hermes-reloader sidecar image injected into every agent pod.
+reloaderImage:
+  repository: harbor.bne1.ouchi.com.au/applications/hermes-reloader
+  tag: ""                       # defaults to .Chart.AppVersion
+
+imagePullSecrets:
+  - name: harbor-pull
+
+crds:
+  install: true                 # install/upgrade CRDs with the chart
+  keep: true                    # CRDs are annotated helm.sh/resource-policy: keep
+
+rbac:
+  create: true
+
+serviceAccount:
+  create: true
+  name: ""
+
+replicas: 1
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 256Mi
+
+metrics:
+  enabled: true
+  serviceMonitor: false
+
+leaderElection:
+  enabled: true
+
+# Operator pod overlay (nodeSelector / tolerations / affinity / …).
+podTemplate: {}
+
+# [] = watch all namespaces (cluster-scoped). Reserved for future use.
+watchNamespaces: []

@@ -1,0 +1,6 @@
+## Append samples of your project ##
+resources:
+- hermes_v1alpha1_hermesagent.yaml
+- hermes_v1alpha1_hermesconfigpreset.yaml
+- hermes_v1alpha1_hermeschannel.yaml
+# +kubebuilder:scaffold:manifestskustomizesamples

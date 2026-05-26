@@ -1,0 +1,96 @@
+apiVersion: hermes.nousresearch.io/v1alpha1
+kind: HermesAgent
+metadata:
+  name: research-bot
+  labels:
+    app.kubernetes.io/name: hermes-operator
+spec:
+  image: harbor.bne1.ouchi.com.au/applications/hermes-agent:v2026.5.16
+  imagePullPolicy: IfNotPresent
+  imagePullSecrets:
+    - name: harbor-pull
+
+  soul: |
+    You are a focused research assistant.
+
+  model:
+    default: anthropic/claude-opus-4.6
+    provider: auto
+  agent:
+    maxTurns: 60
+    reasoningEffort: medium
+  compression:
+    enabled: true
+    threshold: "0.50"
+    targetRatio: "0.20"
+    protectLastN: 20
+  memory:
+    memoryEnabled: true
+    userProfileEnabled: true
+
+  apiServer:
+    enabled: true
+    host: 0.0.0.0
+    port: 8642
+    keySecretRef: { name: research-bot-secrets, key: api-server-key }
+    service:
+      type: ClusterIP
+    ingress:
+      enabled: true
+      className: nginx
+      host: api.research-bot.example.com
+      path: /
+      pathType: Prefix
+      annotations:
+        nginx.ingress.kubernetes.io/proxy-body-size: "25m"
+        cert-manager.io/cluster-issuer: letsencrypt-prod
+      tls:
+        - secretName: research-bot-api-tls
+          hosts: [api.research-bot.example.com]
+
+  channels:
+    - type: telegram
+      enabled: true
+      secretRef: { name: research-bot-secrets }
+      webhookPort: 0
+
+  skills:
+    disabled: []
+    enablePackageManagementSkill: true
+
+  packages:
+    apt: [ripgrep, jq]
+    brew: [gh, fd]
+
+  runtime:
+    terminalBackend: local
+    terminalTimeout: 180
+    codeExecution:
+      timeout: 300
+      maxToolCalls: 50
+
+  envFrom:
+    - secretRef: { name: research-bot-secrets }
+  authJSONBootstrapSecretRef: { name: research-bot-secrets, key: auth-json }
+
+  serviceAccount:
+    create: true
+    automountToken: true
+
+  storage:
+    size: 20Gi
+    reclaimPolicy: Retain
+
+  replicas: 1
+  resources:
+    requests: { cpu: "500m", memory: 2Gi }
+    limits: { cpu: "2", memory: 4Gi }
+  shmSize: 1Gi
+
+  runAsRoot: true
+  hermesUID: 10000
+  hermesGID: 10000
+  fsGroup: 10000
+
+  probes:
+    mode: auto
