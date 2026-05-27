@@ -266,6 +266,31 @@ func reassertInvariants(a *hermesv1alpha1.HermesAgent, pod *corev1.PodTemplateSp
 
 	// ServiceAccount is authoritative over any overlay value (§3.7).
 	pod.Spec.ServiceAccountName = ServiceAccountName(a)
+
+	// DinD sidecar (docker backend) is operator-owned and re-asserted after the
+	// overlay (§11.2): the sidecar, its shared socket volume, and the agent's
+	// DOCKER_HOST + socket mount.
+	if dockerBackend(a) {
+		applyDockerBackend(a, pod)
+	}
+}
+
+// applyDockerBackend injects (and re-asserts) the operator-managed Docker-in-
+// Docker sidecar and wires the agent container to it (§11.2). Idempotent —
+// upserts by name so it is safe before or after the podTemplate overlay.
+func applyDockerBackend(a *hermesv1alpha1.HermesAgent, pod *corev1.PodTemplateSpec) {
+	if v := dindSocketVolume(a); v != nil {
+		upsertVolume(&pod.Spec.Volumes, *v)
+	}
+	// Append/replace the dind container; this may reslice Containers, so re-find
+	// the agent container afterwards before mutating it.
+	upsertContainer(&pod.Spec.Containers, dindContainer(a))
+	if hermes := findContainer(pod.Spec.Containers, ContainerHermes); hermes != nil {
+		upsertEnv(&hermes.Env, corev1.EnvVar{Name: "DOCKER_HOST", Value: dockerHost(a)})
+		if m := dindSocketMount(a); m != nil {
+			upsertMount(&hermes.VolumeMounts, *m)
+		}
+	}
 }
 
 func findContainer(containers []corev1.Container, name string) *corev1.Container {
@@ -295,6 +320,26 @@ func upsertMount(mounts *[]corev1.VolumeMount, m corev1.VolumeMount) {
 		}
 	}
 	*mounts = append(*mounts, m)
+}
+
+func upsertContainer(containers *[]corev1.Container, c corev1.Container) {
+	for i := range *containers {
+		if (*containers)[i].Name == c.Name {
+			(*containers)[i] = c
+			return
+		}
+	}
+	*containers = append(*containers, c)
+}
+
+func upsertEnv(env *[]corev1.EnvVar, e corev1.EnvVar) {
+	for i := range *env {
+		if (*env)[i].Name == e.Name {
+			(*env)[i] = e
+			return
+		}
+	}
+	*env = append(*env, e)
 }
 
 // mergeSecurityContext overlays the operator's required fields onto any

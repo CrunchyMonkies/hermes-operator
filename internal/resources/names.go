@@ -38,12 +38,14 @@ const (
 	// Container names (patch-merge keys for the podTemplate overlay).
 	ContainerHermes   = "hermes"
 	ContainerReloader = "reloader"
+	ContainerDind     = "dind"
 	InitConfig        = "config-init"
 
 	// Volume names.
-	VolShared = "shared-data"
-	VolConfig = "config"
-	VolShm    = "dev-shm"
+	VolShared     = "shared-data"
+	VolConfig     = "config"
+	VolShm        = "dev-shm"
+	VolDindSocket = "dind-socket"
 
 	// Verified upstream mount points and subPaths (spec §4.1).
 	HermesHome    = "/opt/data"
@@ -52,6 +54,15 @@ const (
 	SubPathData   = "data"
 	SubPathLocal  = "dotlocal"
 	SubPathBrew   = "linuxbrew"
+
+	// DinD sidecar (docker terminal backend, §11.2). The daemon's image/layer
+	// store at /var/lib/docker is a dedicated subPath on the SAME shared PVC
+	// (keeps the single-PVC invariant, §4) so pulled images persist across pod
+	// restarts. DindSocketDir is the emptyDir shared with the agent container
+	// for the unix-socket transport.
+	DindDockerDir = "/var/lib/docker"
+	SubPathDind   = "dind"
+	DindSocketDir = "/var/run/dind"
 
 	// Where the config ConfigMap is mounted for the init container to copy from.
 	ConfigSrcDir = "/etc/hermes-config"
@@ -64,6 +75,12 @@ const (
 
 	// Default Homebrew prefix on the shared PVC.
 	DefaultHomebrewPrefix = "/home/linuxbrew/.linuxbrew"
+
+	// Default DinD images (mirror the CRD defaults / spec §11.2). The rootless
+	// variant is selected when runtime.docker.rootless is set and the image is
+	// left at the default.
+	DefaultDindImage         = "docker:27-dind"
+	DefaultDindRootlessImage = "docker:27-dind-rootless"
 )
 
 // AgentName returns the HermesAgent object name (used as the base for children).

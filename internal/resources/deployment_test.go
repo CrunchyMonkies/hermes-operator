@@ -201,4 +201,168 @@ func TestIngressAnnotationsVerbatim(t *testing.T) {
 	}
 }
 
+func findVolume(vols []corev1.Volume, name string) *corev1.Volume {
+	for i := range vols {
+		if vols[i].Name == name {
+			return &vols[i]
+		}
+	}
+	return nil
+}
+
+// TestDockerBackendInjectsDindWithPVC is the core of the docker-backend feature:
+// the dind sidecar must exist and back /var/lib/docker with a subPath on the
+// shared PVC (not an emptyDir), plus the identical PVC subPath mounts and the
+// agent's DOCKER_HOST wiring (§11.2).
+func TestDockerBackendInjectsDindWithPVC(t *testing.T) {
+	a := baseAgent()
+	a.Spec.Runtime.TerminalBackend = "docker"
+
+	dep, err := Deployment(a, "sha256:abc", "")
+	if err != nil {
+		t.Fatalf("Deployment: %v", err)
+	}
+	tpl := dep.Spec.Template
+
+	dind := findContainer(tpl.Spec.Containers, ContainerDind)
+	if dind == nil {
+		t.Fatal("dind sidecar not injected for docker backend")
+	}
+
+	// /var/lib/docker must be PVC-backed via the shared claim + dind subPath.
+	dockerMount := findMount(dind, DindDockerDir)
+	if dockerMount == nil {
+		t.Fatalf("dind has no %s mount", DindDockerDir)
+	}
+	if dockerMount.Name != VolShared || dockerMount.SubPath != SubPathDind {
+		t.Errorf("%s mount = {vol:%s subPath:%s}, want {vol:%s subPath:%s}",
+			DindDockerDir, dockerMount.Name, dockerMount.SubPath, VolShared, SubPathDind)
+	}
+	// That volume must be the shared PVC, not an emptyDir.
+	shared := findVolume(tpl.Spec.Volumes, VolShared)
+	if shared == nil || shared.PersistentVolumeClaim == nil {
+		t.Errorf("%s volume is not a PVC: %+v", VolShared, shared)
+	}
+
+	// Identical-path PVC subPaths must be mapped into dind so bind mounts resolve.
+	for path, sub := range map[string]string{HermesHome: SubPathData, DotLocalPath: SubPathLocal, LinuxbrewPath: SubPathBrew} {
+		m := findMount(dind, path)
+		if m == nil || m.Name != VolShared || m.SubPath != sub {
+			t.Errorf("dind mount for %s = %+v, want shared subPath %s", path, m, sub)
+		}
+	}
+
+	// Standard (non-rootless) dind is privileged.
+	if dind.SecurityContext == nil || dind.SecurityContext.Privileged == nil || !*dind.SecurityContext.Privileged {
+		t.Error("non-rootless dind must be privileged")
+	}
+
+	// Agent wired to the daemon over the default unix socket.
+	hermes := findContainer(tpl.Spec.Containers, ContainerHermes)
+	var dockerHostVal string
+	for _, e := range hermes.Env {
+		if e.Name == "DOCKER_HOST" {
+			dockerHostVal = e.Value
+		}
+	}
+	if dockerHostVal != "unix://"+DindSocketDir+"/docker.sock" {
+		t.Errorf("agent DOCKER_HOST = %q, want unix socket", dockerHostVal)
+	}
+	if findMount(hermes, DindSocketDir) == nil || findMount(dind, DindSocketDir) == nil {
+		t.Error("unix socket emptyDir not mounted into both agent and dind")
+	}
+	if findVolume(tpl.Spec.Volumes, VolDindSocket) == nil {
+		t.Errorf("%s socket volume missing", VolDindSocket)
+	}
+}
+
+// TestDockerBackendReassertedAfterOverlay ensures the operator-owned dind
+// survives (and is re-asserted over) a podTemplate overlay (§11.2 / §3.6).
+func TestDockerBackendReassertedAfterOverlay(t *testing.T) {
+	a := baseAgent()
+	a.Spec.Runtime.TerminalBackend = "docker"
+	// Overlay tries to weaken dind (drop privileged) and add an unrelated sidecar.
+	a.Spec.PodTemplate = &corev1.PodTemplateSpec{
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{
+				{Name: ContainerDind, SecurityContext: &corev1.SecurityContext{Privileged: ptrBool(false)}},
+				{Name: "log-tailer", Image: "busybox"},
+			},
+		},
+	}
+
+	dep, err := Deployment(a, "sha256:abc", "")
+	if err != nil {
+		t.Fatalf("Deployment: %v", err)
+	}
+	tpl := dep.Spec.Template
+	if findContainer(tpl.Spec.Containers, "log-tailer") == nil {
+		t.Error("overlay sidecar dropped")
+	}
+	dind := findContainer(tpl.Spec.Containers, ContainerDind)
+	if dind == nil || findMount(dind, DindDockerDir) == nil {
+		t.Fatal("dind not re-asserted after overlay")
+	}
+	if dind.SecurityContext == nil || dind.SecurityContext.Privileged == nil || !*dind.SecurityContext.Privileged {
+		t.Error("operator must re-assert privileged dind over the overlay")
+	}
+}
+
+// TestDockerBackendRootlessAndTCP covers the rootless image swap (no privileged)
+// and the tcp socket transport (no shared emptyDir).
+func TestDockerBackendRootlessAndTCP(t *testing.T) {
+	a := baseAgent()
+	a.Spec.Runtime.TerminalBackend = "docker"
+	a.Spec.Runtime.Docker.Rootless = true
+	a.Spec.Runtime.Docker.SocketTransport = "tcp"
+
+	dep, err := Deployment(a, "sha256:abc", "")
+	if err != nil {
+		t.Fatalf("Deployment: %v", err)
+	}
+	tpl := dep.Spec.Template
+	dind := findContainer(tpl.Spec.Containers, ContainerDind)
+	if dind == nil {
+		t.Fatal("dind not injected")
+	}
+	if dind.Image != DefaultDindRootlessImage {
+		t.Errorf("rootless image = %q, want %q", dind.Image, DefaultDindRootlessImage)
+	}
+	if dind.SecurityContext != nil && dind.SecurityContext.Privileged != nil && *dind.SecurityContext.Privileged {
+		t.Error("rootless dind must not be privileged")
+	}
+	// /var/lib/docker is still PVC-backed regardless of transport.
+	if m := findMount(dind, DindDockerDir); m == nil || m.SubPath != SubPathDind {
+		t.Error("rootless dind still needs the PVC-backed docker dir")
+	}
+	// tcp transport: no shared socket emptyDir.
+	if findVolume(tpl.Spec.Volumes, VolDindSocket) != nil {
+		t.Error("tcp transport must not create the socket emptyDir")
+	}
+	hermes := findContainer(tpl.Spec.Containers, ContainerHermes)
+	var dh string
+	for _, e := range hermes.Env {
+		if e.Name == "DOCKER_HOST" {
+			dh = e.Value
+		}
+	}
+	if dh != "tcp://127.0.0.1:2375" {
+		t.Errorf("agent DOCKER_HOST = %q, want tcp", dh)
+	}
+}
+
+// TestLocalBackendHasNoDind is the negative: no sidecar for the default backend.
+func TestLocalBackendHasNoDind(t *testing.T) {
+	a := baseAgent() // TerminalBackend defaults to "" / local
+	dep, err := Deployment(a, "sha256:abc", "")
+	if err != nil {
+		t.Fatalf("Deployment: %v", err)
+	}
+	if findContainer(dep.Spec.Template.Spec.Containers, ContainerDind) != nil {
+		t.Error("dind must not be injected for the local backend")
+	}
+}
+
+func ptrBool(b bool) *bool { return &b }
+
 func ptrI64(i int64) *int64 { return &i }

@@ -17,20 +17,56 @@ limitations under the License.
 package resources
 
 import (
+	"fmt"
+
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	hermesv1alpha1 "github.com/matthew/hermes-operator/api/v1alpha1"
 )
 
+// KubeConfigKey is the config-ConfigMap data key holding the rendered kubeconfig
+// the init container copies to ~/.kube/config (spec.kubeconfig.enabled).
+const KubeConfigKey = "kube-config"
+
+// KubeconfigYAML renders an in-cluster kubeconfig that authenticates as the
+// pod's ServiceAccount via the projected token + CA bundle. kubelet rotates the
+// token file; kubectl re-reads tokenFile each call, so it never goes stale. The
+// context is scoped to the agent's namespace.
+func KubeconfigYAML(a *hermesv1alpha1.HermesAgent) string {
+	return fmt.Sprintf(`apiVersion: v1
+kind: Config
+clusters:
+  - name: in-cluster
+    cluster:
+      server: https://kubernetes.default.svc
+      certificate-authority: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+users:
+  - name: %[1]s
+    user:
+      tokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
+contexts:
+  - name: %[2]s
+    context:
+      cluster: in-cluster
+      user: %[1]s
+      namespace: %[2]s
+current-context: %[2]s
+`, a.Name, a.Namespace)
+}
+
 // ConfigMap builds the ConfigMap holding the rendered config.yaml and (if set)
-// SOUL.md. The init container copies these onto the writable PVC at boot.
+// SOUL.md, plus the kubeconfig when spec.kubeconfig.enabled. The init container
+// copies these onto the writable PVC at boot.
 func ConfigMap(a *hermesv1alpha1.HermesAgent, configYAML []byte, soul string) *corev1.ConfigMap {
 	data := map[string]string{
 		"config.yaml": string(configYAML),
 	}
 	if soul != "" {
 		data["SOUL.md"] = soul
+	}
+	if a.Spec.Kubeconfig.Enabled {
+		data[KubeConfigKey] = KubeconfigYAML(a)
 	}
 	return &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{

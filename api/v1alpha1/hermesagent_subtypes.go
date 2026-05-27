@@ -225,8 +225,8 @@ type DockerRuntimeStorage struct {
 	Size *resource.Quantity `json:"size,omitempty"`
 }
 
-// DockerRuntimeSpec configures the Docker-in-Docker sidecar (v1beta1 wiring;
-// modeled here so the surface is stable).
+// DockerRuntimeSpec configures the Docker-in-Docker sidecar the operator injects
+// when runtime.terminalBackend is docker (§11.2).
 type DockerRuntimeSpec struct {
 	// +kubebuilder:default="docker:27-dind"
 	// +optional
@@ -263,6 +263,16 @@ type RuntimeSpec struct {
 	Delegation DelegationSpec `json:"delegation,omitempty"`
 	// +optional
 	Docker DockerRuntimeSpec `json:"docker,omitempty"`
+}
+
+// KubeconfigSpec configures an in-cluster kubeconfig written to ~/.kube/config
+// in the agent container (from the pod's projected ServiceAccount token + CA).
+type KubeconfigSpec struct {
+	// enabled writes ~/.kube/config at boot so kubectl/k8s tools work with no
+	// extra setup, using the pod's ServiceAccount identity.
+	// +kubebuilder:default=false
+	// +optional
+	Enabled bool `json:"enabled,omitempty"`
 }
 
 // CronJob is a declaratively-seeded scheduled task. See specification §12.

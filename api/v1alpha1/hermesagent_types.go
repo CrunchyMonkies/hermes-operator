@@ -30,11 +30,12 @@ import (
 // +kubebuilder:validation:XValidation:rule="(has(self.storage.existingClaim) && size(self.storage.existingClaim) != 0) != (has(self.storage.size) || (has(self.storage.storageClassName) && size(self.storage.storageClassName) != 0))",message="storage.existingClaim is mutually exclusive with storage.size/storageClassName; set exactly one"
 // +kubebuilder:validation:XValidation:rule="!self.apiServer.enabled || (has(self.apiServer.keySecretRef) && self.apiServer.host != '127.0.0.1' && self.apiServer.host != 'localhost')",message="apiServer.enabled requires keySecretRef and a non-localhost host"
 // +kubebuilder:validation:XValidation:rule="self.probes.mode != 'http' || self.apiServer.enabled",message="probes.mode=http requires apiServer.enabled"
-// +kubebuilder:validation:XValidation:rule="!self.apiServer.ingress.enabled || (self.apiServer.enabled && has(self.apiServer.ingress.host) && size(self.apiServer.ingress.host) != 0)",message="apiServer.ingress.enabled requires apiServer.enabled and a host"
-// +kubebuilder:validation:XValidation:rule="!self.dashboard.ingress.enabled || (self.dashboard.enabled && has(self.dashboard.ingress.host) && size(self.dashboard.ingress.host) != 0)",message="dashboard.ingress.enabled requires dashboard.enabled and a host"
-// +kubebuilder:validation:XValidation:rule="!has(self.channels) || self.channels.all(c, !c.ingress.enabled || (c.webhookPort > 0 && has(c.ingress.host) && size(c.ingress.host) != 0))",message="channel ingress.enabled requires webhookPort>0 and a host"
-// +kubebuilder:validation:XValidation:rule="!has(self.skills.custom) || self.skills.custom.all(s, has(s.sourceRef) != (has(s.inline) && size(s.inline) != 0))",message="each skills.custom entry must set exactly one of sourceRef or inline"
+// +kubebuilder:validation:XValidation:rule="!has(self.apiServer.ingress) || !self.apiServer.ingress.enabled || (self.apiServer.enabled && has(self.apiServer.ingress.host) && size(self.apiServer.ingress.host) != 0)",message="apiServer.ingress.enabled requires apiServer.enabled and a host"
+// +kubebuilder:validation:XValidation:rule="!has(self.dashboard.ingress) || !self.dashboard.ingress.enabled || (self.dashboard.enabled && has(self.dashboard.ingress.host) && size(self.dashboard.ingress.host) != 0)",message="dashboard.ingress.enabled requires dashboard.enabled and a host"
+// +kubebuilder:validation:XValidation:rule="!has(self.channels) || self.channels.all(c, !has(c.ingress) || !c.ingress.enabled || (c.webhookPort > 0 && has(c.ingress.host) && size(c.ingress.host) != 0))",message="channel ingress.enabled requires webhookPort>0 and a host"
+// +kubebuilder:validation:XValidation:rule="!has(self.skills) || !has(self.skills.custom) || self.skills.custom.all(s, has(s.sourceRef) != (has(s.inline) && size(s.inline) != 0))",message="each skills.custom entry must set exactly one of sourceRef or inline"
 // +kubebuilder:validation:XValidation:rule="self.serviceAccount.create || (has(self.serviceAccount.name) && size(self.serviceAccount.name) != 0)",message="serviceAccount.name is required when serviceAccount.create is false"
+// +kubebuilder:validation:XValidation:rule="!has(self.kubeconfig) || !self.kubeconfig.enabled || !has(self.serviceAccount.automountToken) || self.serviceAccount.automountToken",message="kubeconfig.enabled requires the ServiceAccount token (serviceAccount.automountToken must not be false)"
 type HermesAgentSpec struct {
 	// image is the agent container image (the operator's derived image with brew).
 	// +required
@@ -139,6 +140,15 @@ type HermesAgentSpec struct {
 
 	// +optional
 	Probes ProbesSpec `json:"probes,omitempty"`
+
+	// kubeconfig, when enabled, writes an in-cluster kubeconfig to ~/.kube/config
+	// (the agent's $HOME/.kube/config on the shared PVC) pointing at the pod's
+	// projected ServiceAccount token + CA, so kubectl and k8s client tools use
+	// the pod's SA identity with no extra config. Requires the SA token to be
+	// automounted (serviceAccount.automountToken != false); pair with a suitable
+	// Role/RoleBinding for the access the agent needs.
+	// +optional
+	Kubeconfig KubeconfigSpec `json:"kubeconfig,omitempty"`
 }
 
 // EndpointsStatus reports the in-cluster service endpoints.

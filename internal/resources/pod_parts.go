@@ -23,6 +23,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
+	"k8s.io/utils/ptr"
 
 	hermesv1alpha1 "github.com/matthew/hermes-operator/api/v1alpha1"
 )
@@ -274,6 +275,92 @@ func pick(v, def int32) int32 {
 	return def
 }
 
+// dockerBackend reports whether the agent runs tools in a Docker-in-Docker
+// sidecar (terminal.backend == docker, §11.2).
+func dockerBackend(a *hermesv1alpha1.HermesAgent) bool {
+	return a.Spec.Runtime.TerminalBackend == "docker"
+}
+
+// dockerHost is the DOCKER_HOST the agent uses to reach the dind daemon, and the
+// address the daemon listens on. unix (default) shares an emptyDir socket; tcp
+// uses intra-pod localhost.
+func dockerHost(a *hermesv1alpha1.HermesAgent) string {
+	if a.Spec.Runtime.Docker.SocketTransport == "tcp" {
+		return "tcp://127.0.0.1:2375"
+	}
+	return "unix://" + DindSocketDir + "/docker.sock"
+}
+
+// dindImage resolves the dind sidecar image, swapping to the rootless variant
+// when rootless is requested and the image is left at the default.
+func dindImage(a *hermesv1alpha1.HermesAgent) string {
+	img := a.Spec.Runtime.Docker.Image
+	if img == "" {
+		img = DefaultDindImage
+	}
+	if a.Spec.Runtime.Docker.Rootless && img == DefaultDindImage {
+		img = DefaultDindRootlessImage
+	}
+	return img
+}
+
+// dindSocketVolume is the emptyDir carrying the daemon's unix socket, shared
+// between the agent and dind containers. Returns nil for the tcp transport.
+func dindSocketVolume(a *hermesv1alpha1.HermesAgent) *corev1.Volume {
+	if a.Spec.Runtime.Docker.SocketTransport == "tcp" {
+		return nil
+	}
+	return &corev1.Volume{
+		Name:         VolDindSocket,
+		VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}},
+	}
+}
+
+// dindSocketMount mounts the shared socket emptyDir (unix transport only).
+func dindSocketMount(a *hermesv1alpha1.HermesAgent) *corev1.VolumeMount {
+	if a.Spec.Runtime.Docker.SocketTransport == "tcp" {
+		return nil
+	}
+	return &corev1.VolumeMount{Name: VolDindSocket, MountPath: DindSocketDir}
+}
+
+// dindContainer builds the operator-managed Docker-in-Docker sidecar (§11.2).
+// It maps the SAME shared-PVC subPaths at IDENTICAL paths so the agent's
+// host-path bind mounts resolve on the daemon's filesystem, and backs
+// /var/lib/docker with a dedicated subPath on the shared PVC so pulled images
+// persist across restarts.
+func dindContainer(a *hermesv1alpha1.HermesAgent) corev1.Container {
+	mounts := []corev1.VolumeMount{
+		{Name: VolShared, MountPath: HermesHome, SubPath: SubPathData},
+		{Name: VolShared, MountPath: DotLocalPath, SubPath: SubPathLocal},
+		{Name: VolShared, MountPath: LinuxbrewPath, SubPath: SubPathBrew},
+		// The PVC-backed image/layer store the request is about.
+		{Name: VolShared, MountPath: DindDockerDir, SubPath: SubPathDind},
+	}
+	if m := dindSocketMount(a); m != nil {
+		mounts = append(mounts, *m)
+	}
+
+	c := corev1.Container{
+		Name:            ContainerDind,
+		Image:           dindImage(a),
+		ImagePullPolicy: a.Spec.ImagePullPolicy,
+		// Pin the daemon to our socket/address; empty TLS dir disables the
+		// dind entrypoint's auto-TLS so it listens plaintext intra-pod.
+		Args: []string{"--host=" + dockerHost(a)},
+		Env: []corev1.EnvVar{
+			{Name: "DOCKER_TLS_CERTDIR", Value: ""},
+		},
+		VolumeMounts: mounts,
+		Resources:    a.Spec.Runtime.Docker.Resources,
+	}
+	// Standard DinD needs privileged; the rootless variant must not set it.
+	if !a.Spec.Runtime.Docker.Rootless {
+		c.SecurityContext = &corev1.SecurityContext{Privileged: ptr.To(true)}
+	}
+	return c
+}
+
 // configInitCommand copies the operator-rendered config files onto the writable
 // PVC at boot (avoids read-only subPath ConfigMap mounts and the chmod caveat,
 // spec §4.3 / open question #2). Re-applied every start ⇒ operator-owned config.
@@ -288,5 +375,15 @@ for f in config.yaml SOUL.md; do
 done
 chmod 640 %[2]s/config.yaml 2>/dev/null || true
 `, ConfigSrcDir, HermesHome, uidgid)
+	if a.Spec.Kubeconfig.Enabled {
+		// Write ~/.kube/config (HOME=/opt/data) owned by the hermes user, mode
+		// 0600, with a writable 0700 .kube dir so kubectl's cache works.
+		script += fmt.Sprintf(`mkdir -p %[2]s/.kube
+cp %[1]s/%[4]s %[2]s/.kube/config
+chown %[3]s %[2]s/.kube %[2]s/.kube/config 2>/dev/null || true
+chmod 700 %[2]s/.kube 2>/dev/null || true
+chmod 600 %[2]s/.kube/config 2>/dev/null || true
+`, ConfigSrcDir, HermesHome, uidgid, KubeConfigKey)
+	}
 	return []string{"sh", "-c", script}
 }
