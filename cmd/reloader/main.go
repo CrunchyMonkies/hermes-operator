@@ -57,7 +57,6 @@ type reloader struct {
 	brewDist       string
 	skillSrcDir    string
 	brewPackages   []string
-	aptPackages    []string
 	customSkills   []string
 	k8s            client.Client
 }
@@ -73,7 +72,6 @@ func main() {
 		brewDist:       envOr("RELOADER_HOMEBREW_DIST", "/opt/homebrew-dist"),
 		skillSrcDir:    envOr("RELOADER_SKILL_SRC_DIR", "/etc/hermes-skills"),
 		brewPackages:   splitNonEmpty(os.Getenv("RELOADER_BREW_PACKAGES"), " "),
-		aptPackages:    splitNonEmpty(os.Getenv("RELOADER_APT_PACKAGES"), " "),
 		customSkills:   splitNonEmpty(os.Getenv("RELOADER_CUSTOM_SKILLS"), ","),
 	}
 
@@ -244,7 +242,6 @@ func (r *reloader) writeStatus(ctx context.Context, brewInstalled []string, sync
 	agent.Status.Skills.Synced = int32(syncedSkills)
 	agent.Status.Skills.CustomActive = r.customSkills
 	agent.Status.Packages.BrewInstalled = brewInstalled
-	agent.Status.Packages.AptApplied = r.aptPackages
 	if err := r.k8s.Status().Patch(ctx, agent, patch); err != nil {
 		log.Error(err, "status write-back failed")
 	}

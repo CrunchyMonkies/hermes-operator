@@ -129,10 +129,6 @@ func hermesEnv(a *hermesv1alpha1.HermesAgent) []corev1.EnvVar {
 		{Name: "PYTHONUNBUFFERED", Value: "1"},
 	}
 
-	if len(a.Spec.Packages.Apt) > 0 {
-		env = append(env, corev1.EnvVar{Name: "HERMES_APT_PACKAGES", Value: strings.Join(a.Spec.Packages.Apt, " ")})
-	}
-
 	if a.Spec.APIServer.Enabled {
 		host := a.Spec.APIServer.Host
 		port := a.Spec.APIServer.Port
@@ -208,6 +204,11 @@ func hermesEnv(a *hermesv1alpha1.HermesAgent) []corev1.EnvVar {
 				},
 			},
 		})
+	}
+	// Point Python at the honcho-ai install on the shared PVC (the install init
+	// container writes it to the dotlocal user-site).
+	if honchoInstallEnabled(a) {
+		env = append(env, corev1.EnvVar{Name: "PYTHONPATH", Value: HonchoSitePackages})
 	}
 
 	// User-provided env appended last (can override operator defaults by name
@@ -377,6 +378,50 @@ func dindContainer(a *hermesv1alpha1.HermesAgent) corev1.Container {
 		c.SecurityContext = &corev1.SecurityContext{Privileged: ptr.To(true)}
 	}
 	return c
+}
+
+// honchoInUse reports whether the agent uses Honcho (baseURL or API key set).
+func honchoInUse(a *hermesv1alpha1.HermesAgent) bool {
+	return a.Spec.Honcho.BaseURL != "" || a.Spec.Honcho.APIKeySecretRef != nil
+}
+
+// honchoInstallEnabled reports whether the operator should pip-install honcho-ai
+// (honcho in use and installPackage not disabled).
+func honchoInstallEnabled(a *hermesv1alpha1.HermesAgent) bool {
+	return honchoInUse(a) && (a.Spec.Honcho.InstallPackage == nil || *a.Spec.Honcho.InstallPackage)
+}
+
+// honchoInitContainer pip-installs honcho-ai into the shared PVC's dotlocal
+// subPath (the python user-site) at boot — idempotent, mirroring the hand-rolled
+// install lana used. The hermes container imports it via the user-site / PYTHONPATH.
+func honchoInitContainer(a *hermesv1alpha1.HermesAgent) corev1.Container {
+	img := a.Spec.Honcho.InstallImage
+	if img == "" {
+		img = DefaultHonchoInstallImage
+	}
+	script := fmt.Sprintf(`set -e
+TARGET=%[1]s
+if [ -f "$TARGET/honcho/__init__.py" ]; then
+  echo "honcho-ai already installed in $TARGET"
+  exit 0
+fi
+mkdir -p "$TARGET"
+pip install --no-cache-dir --target "$TARGET" %[2]q
+`, HonchoSitePackages, HonchoPackageSpec)
+	return corev1.Container{
+		Name:            InitHoncho,
+		Image:           img,
+		ImagePullPolicy: a.Spec.ImagePullPolicy,
+		Command:         []string{"sh", "-c", script},
+		VolumeMounts: []corev1.VolumeMount{
+			{Name: VolShared, MountPath: HermesHome, SubPath: SubPathData},
+			{Name: VolShared, MountPath: DotLocalPath, SubPath: SubPathLocal},
+		},
+		SecurityContext: &corev1.SecurityContext{
+			RunAsUser:  ptr.To(a.Spec.HermesUID),
+			RunAsGroup: ptr.To(a.Spec.HermesGID),
+		},
+	}
 }
 
 // configInitCommand copies the operator-rendered config files onto the writable

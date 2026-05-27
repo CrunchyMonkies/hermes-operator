@@ -700,6 +700,19 @@ spec:
                     description: baseURL points at the Honcho instance; renders to
                       HONCHO_BASE_URL.
                     type: string
+                  installImage:
+                    default: python:3.13-slim
+                    description: |-
+                      installImage is the python image for the honcho-ai install init container
+                      (its Python must match the agent's — 3.13 at the pinned hermes tag).
+                    type: string
+                  installPackage:
+                    default: true
+                    description: |-
+                      installPackage, when honcho is in use, runs an init container that pip-installs
+                      honcho-ai into the shared PVC at startup (the upstream image doesn't bundle it),
+                      persisted across restarts. Defaults true.
+                    type: boolean
                 type: object
               image:
                 description: image is the agent container image (the operator's derived
@@ -779,12 +792,6 @@ spec:
               packages:
                 description: PackagesSpec declares runtime package installation.
                 properties:
-                  apt:
-                    description: apt packages installed at boot as root (NOT persisted
-                      across recreation).
-                    items:
-                      type: string
-                    type: array
                   brew:
                     description: brew packages installed to the shared PVC (persisted,
                       no sudo).
@@ -9405,8 +9412,9 @@ spec:
                 type: object
               runAsRoot:
                 default: true
-                description: runAsRoot lets the entrypoint usermod/gosu and install
-                  apt packages.
+                description: |-
+                  runAsRoot starts the container as root so the entrypoint can usermod/gosu
+                  before dropping to the hermes user.
                 type: boolean
               runtime:
                 description: RuntimeSpec selects the tool/code execution backend.
@@ -9796,10 +9804,6 @@ spec:
                 description: PackagesStatus reports package reconciliation state (written
                   by the reloader).
                 properties:
-                  aptApplied:
-                    items:
-                      type: string
-                    type: array
                   brewInstalled:
                     items:
                       type: string

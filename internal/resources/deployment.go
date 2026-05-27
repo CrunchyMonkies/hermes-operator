@@ -119,6 +119,11 @@ func basePodTemplate(a *hermesv1alpha1.HermesAgent, configHash, reloaderImage st
 		SecurityContext: initSecurityContext(a),
 	}
 
+	initContainers := []corev1.Container{initContainer}
+	if honchoInstallEnabled(a) {
+		initContainers = append(initContainers, honchoInitContainer(a))
+	}
+
 	pod := corev1.PodTemplateSpec{
 		ObjectMeta: metav1.ObjectMeta{
 			Labels:      Labels(a),
@@ -126,7 +131,7 @@ func basePodTemplate(a *hermesv1alpha1.HermesAgent, configHash, reloaderImage st
 		},
 		Spec: corev1.PodSpec{
 			ServiceAccountName:            ServiceAccountName(a),
-			InitContainers:                []corev1.Container{initContainer},
+			InitContainers:                initContainers,
 			Containers:                    []corev1.Container{hermes, reloader},
 			Volumes:                       baseVolumes(a),
 			ImagePullSecrets:              a.Spec.ImagePullSecrets,
@@ -151,7 +156,6 @@ func reloaderEnv(a *hermesv1alpha1.HermesAgent) []corev1.EnvVar {
 		{Name: "RELOADER_HOMEBREW_PREFIX", Value: HomebrewPrefix(a)},
 		{Name: "RELOADER_HOMEBREW_DIST", Value: "/opt/homebrew-dist"},
 		{Name: "RELOADER_BREW_PACKAGES", Value: strings.Join(a.Spec.Packages.Brew, " ")},
-		{Name: "RELOADER_APT_PACKAGES", Value: strings.Join(a.Spec.Packages.Apt, " ")},
 		{Name: "RELOADER_CUSTOM_SKILLS", Value: strings.Join(skillNames, ",")},
 		{Name: "RELOADER_SKILL_SRC_DIR", Value: SkillSrcDir},
 		{Name: "HERMES_HOME", Value: HermesHome},
@@ -169,7 +173,7 @@ func podSecurityContext(a *hermesv1alpha1.HermesAgent) *corev1.PodSecurityContex
 	return &corev1.PodSecurityContext{FSGroup: ptr.To(a.Spec.FSGroup)}
 }
 
-// hermesSecurityContext: start as root so the entrypoint can usermod/gosu/apt,
+// hermesSecurityContext: start as root so the entrypoint can usermod/gosu,
 // unless runAsRoot is false (then run directly as the hermes user; §4.2).
 func hermesSecurityContext(a *hermesv1alpha1.HermesAgent) *corev1.SecurityContext {
 	if a.Spec.RunAsRoot {
@@ -351,11 +355,6 @@ func mergeSecurityContext(user, required *corev1.SecurityContext) *corev1.Securi
 	user.RunAsUser = required.RunAsUser
 	user.RunAsNonRoot = required.RunAsNonRoot
 	return user
-}
-
-// AptPackagesEnvValue is exported for tests/inspection of the apt env wiring.
-func AptPackagesEnvValue(a *hermesv1alpha1.HermesAgent) string {
-	return strings.Join(a.Spec.Packages.Apt, " ")
 }
 
 // UIDString is a small helper for status/debug rendering.

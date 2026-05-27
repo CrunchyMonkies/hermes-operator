@@ -59,7 +59,6 @@ spec:
     enablePackageManagementSkill: true
 
   packages:
-    apt: [ripgrep, jq]
     brew: [gh, fd]
 
   runtime:

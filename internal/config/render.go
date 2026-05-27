@@ -121,9 +121,8 @@ func renderTyped(spec *hermesv1alpha1.HermesAgentSpec) map[string]any {
 
 		// brew packages live on the shared PVC at the Homebrew prefix; mount it
 		// (read-only) and put its bin on PATH so brew-installed tools are available
-		// in the sandbox. (apt packages install into the agent container's ephemeral
-		// rootfs, not the PVC, so they can't be shared into a different tool-container
-		// image — use brew here, or set a custom terminal.docker_image via extraConfig.)
+		// in the sandbox. (For packages a generic tool image lacks, prefer brew or a
+		// custom terminal.docker_image via extraConfig.)
 		if len(spec.Packages.Brew) > 0 {
 			prefix := spec.Packages.HomebrewPrefix
 			if prefix == "" {

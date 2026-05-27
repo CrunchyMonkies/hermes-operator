@@ -138,7 +138,8 @@ type HermesAgentSpec struct {
 	// +kubebuilder:default=10000
 	// +optional
 	HermesGID int64 `json:"hermesGID,omitempty"`
-	// runAsRoot lets the entrypoint usermod/gosu and install apt packages.
+	// runAsRoot starts the container as root so the entrypoint can usermod/gosu
+	// before dropping to the hermes user.
 	// +kubebuilder:default=true
 	// +optional
 	RunAsRoot bool `json:"runAsRoot,omitempty"`
@@ -179,8 +180,6 @@ type SkillsStatus struct {
 
 // PackagesStatus reports package reconciliation state (written by the reloader).
 type PackagesStatus struct {
-	// +optional
-	AptApplied []string `json:"aptApplied,omitempty"`
 	// +optional
 	BrewInstalled []string `json:"brewInstalled,omitempty"`
 }

@@ -31,8 +31,7 @@ type HashInputs struct {
 	Soul string
 	// SkillPayloads maps custom skill name -> its rendered SKILL.md content.
 	SkillPayloads map[string]string
-	// AptPackages / BrewPackages as declared.
-	AptPackages  []string
+	// BrewPackages as declared.
 	BrewPackages []string
 	// SecretVersions maps referenced Secret name -> resourceVersion. The
 	// operator never decodes secret values; a rotation rolls the pod via the
@@ -52,7 +51,6 @@ func ConfigHash(in HashInputs) string {
 		writeBlock(h, "skill:"+name, []byte(in.SkillPayloads[name]))
 	}
 
-	writeBlock(h, "apt", []byte(joinSorted(in.AptPackages)))
 	writeBlock(h, "brew", []byte(joinSorted(in.BrewPackages)))
 
 	for _, name := range sortedKeys(in.SecretVersions) {

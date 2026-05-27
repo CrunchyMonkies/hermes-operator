@@ -121,12 +121,6 @@ spec:
               packages:
                 description: PackagesSpec declares runtime package installation.
                 properties:
-                  apt:
-                    description: apt packages installed at boot as root (NOT persisted
-                      across recreation).
-                    items:
-                      type: string
-                    type: array
                   brew:
                     description: brew packages installed to the shared PVC (persisted,
                       no sudo).

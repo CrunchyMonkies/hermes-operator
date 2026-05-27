@@ -190,9 +190,6 @@ type SkillsSpec struct {
 
 // PackagesSpec declares runtime package installation.
 type PackagesSpec struct {
-	// apt packages installed at boot as root (NOT persisted across recreation).
-	// +optional
-	Apt []string `json:"apt,omitempty"`
 	// brew packages installed to the shared PVC (persisted, no sudo).
 	// +optional
 	Brew []string `json:"brew,omitempty"`
@@ -282,7 +279,8 @@ type SearxngSpec struct {
 	URL string `json:"url,omitempty"`
 }
 
-// HonchoSpec configures the Honcho cross-session user-modeling backend.
+// HonchoSpec configures the Honcho cross-session user-modeling backend. Honcho
+// is "in use" when baseURL or apiKeySecretRef is set.
 type HonchoSpec struct {
 	// baseURL points at the Honcho instance; renders to HONCHO_BASE_URL.
 	// +optional
@@ -291,6 +289,17 @@ type HonchoSpec struct {
 	// a self-hosted instance reached by baseURL alone.
 	// +optional
 	APIKeySecretRef *SecretKeyRef `json:"apiKeySecretRef,omitempty"`
+	// installPackage, when honcho is in use, runs an init container that pip-installs
+	// honcho-ai into the shared PVC at startup (the upstream image doesn't bundle it),
+	// persisted across restarts. Defaults true.
+	// +kubebuilder:default=true
+	// +optional
+	InstallPackage *bool `json:"installPackage,omitempty"`
+	// installImage is the python image for the honcho-ai install init container
+	// (its Python must match the agent's — 3.13 at the pinned hermes tag).
+	// +kubebuilder:default="python:3.13-slim"
+	// +optional
+	InstallImage string `json:"installImage,omitempty"`
 }
 
 // CronJob is a declaratively-seeded scheduled task. See specification §12.
