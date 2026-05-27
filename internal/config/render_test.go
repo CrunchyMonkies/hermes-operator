@@ -141,6 +141,50 @@ func TestKubeconfigDockerVolumesRendered(t *testing.T) {
 	}
 }
 
+func TestBrewMountedIntoDockerToolContainers(t *testing.T) {
+	out, err := RenderConfigYAML(&hermesv1alpha1.HermesAgentSpec{
+		Runtime:  hermesv1alpha1.RuntimeSpec{TerminalBackend: "docker"},
+		Packages: hermesv1alpha1.PackagesSpec{Brew: []string{"kubectl"}},
+	})
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	terminal := mustParse(t, out)["terminal"].(map[string]any)
+
+	vols := terminal["docker_volumes"].([]any)
+	if len(vols) != 1 || vols[0] != "/home/linuxbrew/.linuxbrew:/home/linuxbrew/.linuxbrew:ro" {
+		t.Errorf("brew prefix mount = %v", terminal["docker_volumes"])
+	}
+	denv := terminal["docker_env"].(map[string]any)
+	if denv["PATH"] != "/home/linuxbrew/.linuxbrew/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" {
+		t.Errorf("docker_env.PATH = %v", denv["PATH"])
+	}
+	// local backend -> brew not mounted into tool containers (no docker sandbox).
+	out2, _ := RenderConfigYAML(&hermesv1alpha1.HermesAgentSpec{
+		Runtime:  hermesv1alpha1.RuntimeSpec{TerminalBackend: "local"},
+		Packages: hermesv1alpha1.PackagesSpec{Brew: []string{"kubectl"}},
+	})
+	if _, ok := mustParse(t, out2)["terminal"].(map[string]any)["docker_volumes"]; ok {
+		t.Error("no docker_volumes for local backend")
+	}
+}
+
+func TestKubeconfigAndBrewDockerEnvMerge(t *testing.T) {
+	out, _ := RenderConfigYAML(&hermesv1alpha1.HermesAgentSpec{
+		Runtime:    hermesv1alpha1.RuntimeSpec{TerminalBackend: "docker"},
+		Kubeconfig: hermesv1alpha1.KubeconfigSpec{Enabled: true},
+		Packages:   hermesv1alpha1.PackagesSpec{Brew: []string{"kubectl"}},
+	})
+	terminal := mustParse(t, out)["terminal"].(map[string]any)
+	if len(terminal["docker_volumes"].([]any)) != 3 { // kubeconfig + sa token + brew
+		t.Errorf("expected 3 docker_volumes, got %v", terminal["docker_volumes"])
+	}
+	denv := terminal["docker_env"].(map[string]any)
+	if denv["KUBECONFIG"] == nil || denv["PATH"] == nil {
+		t.Errorf("docker_env should have both KUBECONFIG and PATH: %v", denv)
+	}
+}
+
 func TestKubeconfigDockerVolumesAbsentOtherwise(t *testing.T) {
 	// docker backend but kubeconfig disabled -> no kube mounts.
 	out, _ := RenderConfigYAML(&hermesv1alpha1.HermesAgentSpec{

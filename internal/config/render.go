@@ -99,21 +99,48 @@ func renderTyped(spec *hermesv1alpha1.HermesAgentSpec) map[string]any {
 	putNonZeroInt(terminal, "timeout", int64(spec.Runtime.TerminalTimeout))
 	if spec.Runtime.TerminalBackend == "docker" {
 		terminal["docker_mount_cwd_to_workspace"] = spec.Runtime.Docker.MountCwdToWorkspace
-		// In docker mode tools run in dind-spawned containers that inherit neither
-		// ~/.kube/config nor the projected SA token. Both live on the dind daemon's
-		// filesystem (the shared PVC is mounted at the identical /opt/data, and dind
-		// is a pod container so it has /var/run/secrets/...), so bind-mount them into
-		// every tool container, point KUBECONFIG at the config, and share the pod
-		// network so kubectl can resolve/reach kubernetes.default.svc. extraConfig
-		// can override any of these.
+		// Tools run in dind-spawned containers (a generic image) that inherit none
+		// of the agent's ~/.kube/config, SA token, or brew prefix. Everything that
+		// lives on the shared PVC is already mounted into the dind daemon at its
+		// identical path, so bind-mount what's needed into each tool container and
+		// set matching env. extraConfig can override any of this.
+		var dockerVolumes []string
+		dockerEnv := map[string]string{}
+		var dockerExtraArgs []string
+
 		if spec.Kubeconfig.Enabled {
 			const saDir = "/var/run/secrets/kubernetes.io/serviceaccount"
-			terminal["docker_volumes"] = []string{
+			dockerVolumes = append(dockerVolumes,
 				"/opt/data/.kube/config:/root/.kube/config:ro",
-				saDir + ":" + saDir + ":ro",
+				saDir+":"+saDir+":ro",
+			)
+			dockerEnv["KUBECONFIG"] = "/root/.kube/config"
+			// Share the pod network so kubectl can resolve/reach kubernetes.default.svc.
+			dockerExtraArgs = append(dockerExtraArgs, "--network=host")
+		}
+
+		// brew packages live on the shared PVC at the Homebrew prefix; mount it
+		// (read-only) and put its bin on PATH so brew-installed tools are available
+		// in the sandbox. (apt packages install into the agent container's ephemeral
+		// rootfs, not the PVC, so they can't be shared into a different tool-container
+		// image — use brew here, or set a custom terminal.docker_image via extraConfig.)
+		if len(spec.Packages.Brew) > 0 {
+			prefix := spec.Packages.HomebrewPrefix
+			if prefix == "" {
+				prefix = "/home/linuxbrew/.linuxbrew"
 			}
-			terminal["docker_env"] = map[string]string{"KUBECONFIG": "/root/.kube/config"}
-			terminal["docker_extra_args"] = []string{"--network=host"}
+			dockerVolumes = append(dockerVolumes, prefix+":"+prefix+":ro")
+			dockerEnv["PATH"] = prefix + "/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+		}
+
+		if len(dockerVolumes) > 0 {
+			terminal["docker_volumes"] = dockerVolumes
+		}
+		if len(dockerEnv) > 0 {
+			terminal["docker_env"] = dockerEnv
+		}
+		if len(dockerExtraArgs) > 0 {
+			terminal["docker_extra_args"] = dockerExtraArgs
 		}
 	}
 	putSection(root, "terminal", terminal)
