@@ -391,14 +391,36 @@ func honchoInstallEnabled(a *hermesv1alpha1.HermesAgent) bool {
 	return honchoInUse(a) && (a.Spec.Honcho.InstallPackage == nil || *a.Spec.Honcho.InstallPackage)
 }
 
-// pipPackages is the full set of pip packages installed into the shared PVC:
-// spec.packages.pip plus honcho-ai when honcho is in use.
+// pipPackages is the de-duplicated set of pip packages installed into the shared
+// PVC: spec.packages.pip, plus the deps for each enabled feature whose base image
+// lacks them — honcho-ai (honcho), the messaging-platform SDKs (channels), and the
+// remote terminal-backend SDKs (runtime). Per-feature installDeps toggles (default
+// true) opt out, falling back to hermes' runtime lazy-install.
 func pipPackages(a *hermesv1alpha1.HermesAgent) []string {
-	pkgs := append([]string(nil), a.Spec.Packages.Pip...)
-	if honchoInstallEnabled(a) {
-		pkgs = append(pkgs, HonchoPackageSpec)
+	var out []string
+	seen := map[string]bool{}
+	add := func(specs ...string) {
+		for _, s := range specs {
+			if !seen[s] {
+				seen[s] = true
+				out = append(out, s)
+			}
+		}
 	}
-	return pkgs
+
+	add(a.Spec.Packages.Pip...)
+	if honchoInstallEnabled(a) {
+		add(HonchoPackageSpec)
+	}
+	for _, ch := range a.Spec.Channels {
+		if ch.InstallDeps == nil || *ch.InstallDeps {
+			add(channelPipDeps[ch.Type]...)
+		}
+	}
+	if a.Spec.Runtime.InstallDeps == nil || *a.Spec.Runtime.InstallDeps {
+		add(backendPipDeps[a.Spec.Runtime.TerminalBackend]...)
+	}
+	return out
 }
 
 // pipInstallEnabled reports whether the pip-install init container is needed.

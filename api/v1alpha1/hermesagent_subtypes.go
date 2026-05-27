@@ -138,6 +138,13 @@ type ChannelSpec struct {
 	// ingress is only meaningful when webhookPort > 0.
 	// +optional
 	Ingress IngressSpec `json:"ingress,omitempty"`
+	// installDeps, when true (default), pre-installs this platform's pip
+	// dependencies onto the shared PVC at startup (telegram/discord/slack need
+	// packages the base image doesn't bundle). Set false to rely on hermes'
+	// runtime lazy-install instead.
+	// +kubebuilder:default=true
+	// +optional
+	InstallDeps *bool `json:"installDeps,omitempty"`
 }
 
 // CustomSkill is an operator-shipped skill written into the PVC and activated.
@@ -270,6 +277,13 @@ type RuntimeSpec struct {
 	Delegation DelegationSpec `json:"delegation,omitempty"`
 	// +optional
 	Docker DockerRuntimeSpec `json:"docker,omitempty"`
+	// installDeps, when true (default), pre-installs the terminal backend's pip
+	// dependencies onto the shared PVC at startup (modal/daytona/vercel_sandbox
+	// need SDKs the base image doesn't bundle). Set false to rely on hermes'
+	// runtime lazy-install instead.
+	// +kubebuilder:default=true
+	// +optional
+	InstallDeps *bool `json:"installDeps,omitempty"`
 }
 
 // KubeconfigSpec configures an in-cluster kubeconfig written to ~/.kube/config

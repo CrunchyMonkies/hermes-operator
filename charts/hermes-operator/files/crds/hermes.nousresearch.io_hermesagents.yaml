@@ -272,6 +272,14 @@ spec:
                             type: object
                           type: array
                       type: object
+                    installDeps:
+                      default: true
+                      description: |-
+                        installDeps, when true (default), pre-installs this platform's pip
+                        dependencies onto the shared PVC at startup (telegram/discord/slack need
+                        packages the base image doesn't bundle). Set false to rely on hermes'
+                        runtime lazy-install instead.
+                      type: boolean
                     secretRef:
                       description: secretRef names a Secret whose keys carry the platform
                         credentials.
@@ -9542,6 +9550,14 @@ spec:
                             x-kubernetes-int-or-string: true
                         type: object
                     type: object
+                  installDeps:
+                    default: true
+                    description: |-
+                      installDeps, when true (default), pre-installs the terminal backend's pip
+                      dependencies onto the shared PVC at startup (modal/daytona/vercel_sandbox
+                      need SDKs the base image doesn't bundle). Set false to rely on hermes'
+                      runtime lazy-install instead.
+                    type: boolean
                   terminalBackend:
                     default: local
                     description: terminalBackend selects where tools run. -> terminal.backend

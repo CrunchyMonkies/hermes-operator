@@ -148,3 +148,57 @@ func countContainers(cs []corev1.Container, name string) int {
 	}
 	return n
 }
+
+func pipScript(t *testing.T, a *hermesv1alpha1.HermesAgent) string {
+	t.Helper()
+	dep, err := Deployment(a, "h", "")
+	if err != nil {
+		t.Fatalf("Deployment: %v", err)
+	}
+	ic := findContainer(dep.Spec.Template.Spec.InitContainers, InitPipInstall)
+	if ic == nil {
+		t.Fatal("pip-install init container missing")
+	}
+	return ic.Command[len(ic.Command)-1]
+}
+
+func TestChannelAndBackendPipDeps(t *testing.T) {
+	a := baseAgent()
+	a.Spec.Channels = []hermesv1alpha1.ChannelSpec{
+		{Type: "telegram"}, {Type: "discord"}, {Type: "teams"}, // teams has no deps
+	}
+	a.Spec.Runtime.TerminalBackend = "modal"
+	s := pipScript(t, a)
+	for _, want := range []string{
+		"python-telegram-bot[webhooks]==22.6",
+		"discord.py[voice]==2.7.1", "brotlicffi==1.2.0.1",
+		"modal==1.3.4",
+	} {
+		if !strings.Contains(s, want) {
+			t.Errorf("pip script missing %q:\n%s", want, s)
+		}
+	}
+}
+
+func TestInstallDepsTogglesOff(t *testing.T) {
+	off := false
+	a := baseAgent()
+	a.Spec.Channels = []hermesv1alpha1.ChannelSpec{{Type: "slack", InstallDeps: &off}}
+	a.Spec.Runtime.TerminalBackend = "daytona"
+	a.Spec.Runtime.InstallDeps = &off
+	dep, _ := Deployment(a, "h", "")
+	if findContainer(dep.Spec.Template.Spec.InitContainers, InitPipInstall) != nil {
+		t.Error("pip-install init should be absent when installDeps are off and nothing else needs installing")
+	}
+}
+
+func TestPipDepsDeduped(t *testing.T) {
+	// slack pulls aiohttp==3.13.4; an explicit packages.pip entry for it must not duplicate.
+	a := baseAgent()
+	a.Spec.Channels = []hermesv1alpha1.ChannelSpec{{Type: "slack"}}
+	a.Spec.Packages.Pip = []string{"aiohttp==3.13.4"}
+	s := pipScript(t, a)
+	if n := strings.Count(s, "aiohttp==3.13.4"); n != 1 {
+		t.Errorf("aiohttp should appear once, got %d:\n%s", n, s)
+	}
+}

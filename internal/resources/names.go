@@ -83,7 +83,7 @@ const (
 	// v2026.5.16; re-verify when bumping the pin).
 	DefaultPipImage   = "python:3.13-slim"
 	PipSitePackages   = DotLocalPath + "/lib/python3.13/site-packages"
-	HonchoPackageSpec = "honcho-ai>=2.0.1,<3"
+	HonchoPackageSpec = "honcho-ai==2.0.1"
 
 	// Default DinD images (mirror the CRD defaults / spec §11.2). The rootless
 	// variant is selected when runtime.docker.rootless is set and the image is
