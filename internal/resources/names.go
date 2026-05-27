@@ -75,6 +75,15 @@ const (
 	APIPort       int32 = 8642
 	DashboardPort int32 = 9119
 
+	// Webhook ingress conventions. WebhookPathPrefix + channel type is the HTTP
+	// path the operator routes a channel's inbound webhook at (spec.host based).
+	// When a webhook-capable channel opts into ingress without a port, the
+	// operator deterministically assigns a free port at WebhookPortBase upward
+	// (skipping reserved/used ports) — stable across reconciles, unlike a random
+	// port which would churn the Service/env and roll the pod.
+	WebhookPathPrefix       = "/webhooks/"
+	WebhookPortBase   int32 = 8650
+
 	// Default Homebrew prefix on the shared PVC.
 	DefaultHomebrewPrefix = "/home/linuxbrew/.linuxbrew"
 

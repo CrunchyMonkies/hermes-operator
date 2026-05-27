@@ -28,13 +28,6 @@ import (
 	hermesv1alpha1 "github.com/matthew/hermes-operator/api/v1alpha1"
 )
 
-// channelWebhookPortEnv maps the platforms whose webhook port is a verified env
-// var (spec §3.3). Platforms not listed simply expose a Service port.
-var channelWebhookPortEnv = map[string]string{
-	"telegram": "TELEGRAM_WEBHOOK_PORT",
-	"teams":    "TEAMS_PORT",
-}
-
 // sharedVolumeMounts are the three shared-PVC subPath mounts plus /dev/shm that
 // the operator always asserts on the hermes (and dind) container (§4.1).
 func sharedVolumeMounts() []corev1.VolumeMount {
@@ -168,10 +161,26 @@ func hermesEnv(a *hermesv1alpha1.HermesAgent) []corev1.EnvVar {
 		)
 	}
 
-	for _, ch := range a.Spec.Channels {
-		if ch.WebhookPort > 0 {
-			if envName, ok := channelWebhookPortEnv[ch.Type]; ok {
-				env = append(env, corev1.EnvVar{Name: envName, Value: strconv.Itoa(int(ch.WebhookPort))})
+	// Webhook env for webhook-capable channels. The local listen port is set
+	// whenever a (resolved) port is present; the public webhook URL is set only
+	// when the channel opts into webhook mode (ingress.enabled) and a host is
+	// available — that URL is what flips the platform from polling to webhook.
+	// The verification secret (e.g. TELEGRAM_WEBHOOK_SECRET) is NOT set here; it
+	// must be supplied via the channel secretRef (it arrives via envFrom).
+	whPorts := resolvedWebhookPorts(a)
+	for i, ch := range a.Spec.Channels {
+		wp, ok := webhookPlatforms[ch.Type]
+		if !ok {
+			continue
+		}
+		port := whPorts[i]
+		if port <= 0 {
+			continue
+		}
+		env = append(env, corev1.EnvVar{Name: wp.portEnv, Value: strconv.Itoa(int(port))})
+		if channelWantsWebhook(ch) {
+			if host := channelEffectiveHost(a, ch); host != "" {
+				env = append(env, corev1.EnvVar{Name: wp.urlEnv, Value: webhookURL(host, ch.Type)})
 			}
 		}
 	}

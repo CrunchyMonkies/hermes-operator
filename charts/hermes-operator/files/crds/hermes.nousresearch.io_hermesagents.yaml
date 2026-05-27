@@ -718,6 +718,15 @@ spec:
                       persisted across restarts. Defaults true. The install image is packages.pipImage.
                     type: boolean
                 type: object
+              host:
+                description: |-
+                  host is the base hostname for this agent's HTTP surfaces. When set, it is
+                  the default Ingress host for any surface (apiServer, dashboard, channel
+                  webhook) whose own ingress.host is empty, and it is the host used for the
+                  auto-generated webhook Ingress of webhook-capable channels (e.g. telegram),
+                  which is routed at /webhooks/<channel>. A per-surface ingress.host still
+                  overrides it.
+                type: string
               image:
                 description: image is the agent container image (the operator's derived
                   image with brew).
@@ -9742,19 +9751,22 @@ spec:
             - message: probes.mode=http requires apiServer.enabled
               rule: self.probes.mode != 'http' || self.apiServer.enabled
             - message: apiServer.ingress.enabled requires apiServer.enabled and a
-                host
+                host (apiServer.ingress.host or spec.host)
               rule: '!has(self.apiServer.ingress) || !self.apiServer.ingress.enabled
-                || (self.apiServer.enabled && has(self.apiServer.ingress.host) &&
-                size(self.apiServer.ingress.host) != 0)'
+                || (self.apiServer.enabled && ((has(self.apiServer.ingress.host) &&
+                size(self.apiServer.ingress.host) != 0) || (has(self.host) && size(self.host)
+                != 0)))'
             - message: dashboard.ingress.enabled requires dashboard.enabled and a
-                host
+                host (dashboard.ingress.host or spec.host)
               rule: '!has(self.dashboard.ingress) || !self.dashboard.ingress.enabled
-                || (self.dashboard.enabled && has(self.dashboard.ingress.host) &&
-                size(self.dashboard.ingress.host) != 0)'
-            - message: channel ingress.enabled requires webhookPort>0 and a host
+                || (self.dashboard.enabled && ((has(self.dashboard.ingress.host) &&
+                size(self.dashboard.ingress.host) != 0) || (has(self.host) && size(self.host)
+                != 0)))'
+            - message: channel ingress.enabled requires a host (channels[].ingress.host
+                or spec.host)
               rule: '!has(self.channels) || self.channels.all(c, !has(c.ingress) ||
-                !c.ingress.enabled || (c.webhookPort > 0 && has(c.ingress.host) &&
-                size(c.ingress.host) != 0))'
+                !c.ingress.enabled || ((has(c.ingress.host) && size(c.ingress.host)
+                != 0) || (has(self.host) && size(self.host) != 0)))'
             - message: each skills.custom entry must set exactly one of sourceRef
                 or inline
               rule: '!has(self.skills) || !has(self.skills.custom) || self.skills.custom.all(s,
