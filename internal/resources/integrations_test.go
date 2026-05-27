@@ -20,6 +20,8 @@ import (
 	"strings"
 	"testing"
 
+	corev1 "k8s.io/api/core/v1"
+
 	hermesv1alpha1 "github.com/matthew/hermes-operator/api/v1alpha1"
 )
 
@@ -66,22 +68,22 @@ func TestHonchoPipInstallInitContainer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Deployment: %v", err)
 	}
-	ic := findContainer(dep.Spec.Template.Spec.InitContainers, InitHoncho)
+	ic := findContainer(dep.Spec.Template.Spec.InitContainers, InitPipInstall)
 	if ic == nil {
 		t.Fatal("install-honcho init container missing when honcho is in use")
 	}
 	script := ic.Command[len(ic.Command)-1]
-	if !strings.Contains(script, HonchoPackageSpec) || !strings.Contains(script, HonchoSitePackages) {
+	if !strings.Contains(script, HonchoPackageSpec) || !strings.Contains(script, PipSitePackages) {
 		t.Errorf("install script missing package/target:\n%s", script)
 	}
-	if ic.Image != DefaultHonchoInstallImage {
+	if ic.Image != DefaultPipImage {
 		t.Errorf("install image = %q", ic.Image)
 	}
 	if findMount(ic, DotLocalPath) == nil {
 		t.Error("install-honcho missing the dotlocal subPath mount")
 	}
-	if v, _, ok := envByName(a, "PYTHONPATH"); !ok || v != HonchoSitePackages {
-		t.Errorf("PYTHONPATH = %q ok=%v, want %s", v, ok, HonchoSitePackages)
+	if v, _, ok := envByName(a, "PYTHONPATH"); !ok || v != PipSitePackages {
+		t.Errorf("PYTHONPATH = %q ok=%v, want %s", v, ok, PipSitePackages)
 	}
 }
 
@@ -92,12 +94,57 @@ func TestHonchoInstallSkipped(t *testing.T) {
 	disabled := false
 	off.Spec.Honcho.InstallPackage = &disabled
 	dep, _ := Deployment(off, "h", "")
-	if findContainer(dep.Spec.Template.Spec.InitContainers, InitHoncho) != nil {
+	if findContainer(dep.Spec.Template.Spec.InitContainers, InitPipInstall) != nil {
 		t.Error("install-honcho should be absent when installPackage=false")
 	}
 	// honcho not in use -> no init container.
 	dep2, _ := Deployment(baseAgent(), "h", "")
-	if findContainer(dep2.Spec.Template.Spec.InitContainers, InitHoncho) != nil {
-		t.Error("install-honcho should be absent when honcho is not in use")
+	if findContainer(dep2.Spec.Template.Spec.InitContainers, InitPipInstall) != nil {
+		t.Error("pip-install should be absent when nothing needs installing")
 	}
+}
+
+func TestPipPackagesInitContainer(t *testing.T) {
+	// Standalone pip packages (no honcho) install via the pip-install init.
+	a := baseAgent()
+	a.Spec.Packages.Pip = []string{"ruff"}
+	a.Spec.Packages.PipImage = "python:3.13-custom"
+	dep, _ := Deployment(a, "h", "")
+	ic := findContainer(dep.Spec.Template.Spec.InitContainers, InitPipInstall)
+	if ic == nil {
+		t.Fatal("pip-install init missing for packages.pip")
+	}
+	if ic.Image != "python:3.13-custom" {
+		t.Errorf("pipImage override not used: %q", ic.Image)
+	}
+	if !strings.Contains(ic.Command[2], "'ruff'") {
+		t.Errorf("pip package not shell-quoted in script:\n%s", ic.Command[2])
+	}
+	if v, _, ok := envByName(a, "PYTHONPATH"); !ok || v != PipSitePackages {
+		t.Errorf("PYTHONPATH = %q ok=%v", v, ok)
+	}
+
+	// honcho + packages.pip compose into a single pip-install init.
+	b := baseAgent()
+	b.Spec.Honcho.BaseURL = "http://h:8000"
+	b.Spec.Packages.Pip = []string{"ruff"}
+	dep2, _ := Deployment(b, "h", "")
+	inits := dep2.Spec.Template.Spec.InitContainers
+	if n := countContainers(inits, InitPipInstall); n != 1 {
+		t.Fatalf("expected exactly 1 pip-install init, got %d", n)
+	}
+	s := findContainer(inits, InitPipInstall).Command[2]
+	if !strings.Contains(s, "'ruff'") || !strings.Contains(s, HonchoPackageSpec) {
+		t.Errorf("union install missing packages:\n%s", s)
+	}
+}
+
+func countContainers(cs []corev1.Container, name string) int {
+	n := 0
+	for i := range cs {
+		if cs[i].Name == name {
+			n++
+		}
+	}
+	return n
 }

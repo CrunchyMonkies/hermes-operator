@@ -132,6 +132,20 @@ spec:
                     description: homebrewPrefix overrides the default Homebrew prefix
                       on the PVC.
                     type: string
+                  pip:
+                    description: |-
+                      pip packages installed (via an init container) into the python user-site on
+                      the shared PVC, persisted across restarts; the agent imports them via
+                      PYTHONPATH. honcho-ai is added automatically when honcho is in use.
+                    items:
+                      type: string
+                    type: array
+                  pipImage:
+                    default: python:3.13-slim
+                    description: |-
+                      pipImage is the python image for the pip-install init container (its Python
+                      must match the agent's — 3.13 at the pinned hermes tag).
+                    type: string
                 type: object
               skills:
                 description: SkillsSpec controls skill enablement and operator-provided

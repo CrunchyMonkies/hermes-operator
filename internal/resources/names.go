@@ -40,7 +40,7 @@ const (
 	ContainerReloader = "reloader"
 	ContainerDind     = "dind"
 	InitConfig        = "config-init"
-	InitHoncho        = "install-honcho"
+	InitPipInstall    = "pip-install"
 
 	// Volume names.
 	VolShared     = "shared-data"
@@ -77,13 +77,13 @@ const (
 	// Default Homebrew prefix on the shared PVC.
 	DefaultHomebrewPrefix = "/home/linuxbrew/.linuxbrew"
 
-	// honcho-ai pip install (spec.honcho, when in use). The upstream image doesn't
-	// bundle honcho-ai, so an init container installs it into the python user-site
-	// on the shared PVC's dotlocal subPath. Path is pinned to the hermes python
-	// (3.13 at tag v2026.5.16; re-verify when bumping the pin).
-	DefaultHonchoInstallImage = "python:3.13-slim"
-	HonchoSitePackages        = DotLocalPath + "/lib/python3.13/site-packages"
-	HonchoPackageSpec         = "honcho-ai>=2.0.1,<3"
+	// pip installs (spec.packages.pip, plus honcho-ai when honcho is in use) go
+	// into the python user-site on the shared PVC's dotlocal subPath via the
+	// pip-install init container. Path is pinned to the hermes python (3.13 at tag
+	// v2026.5.16; re-verify when bumping the pin).
+	DefaultPipImage   = "python:3.13-slim"
+	PipSitePackages   = DotLocalPath + "/lib/python3.13/site-packages"
+	HonchoPackageSpec = "honcho-ai>=2.0.1,<3"
 
 	// Default DinD images (mirror the CRD defaults / spec §11.2). The rootless
 	// variant is selected when runtime.docker.rootless is set and the image is

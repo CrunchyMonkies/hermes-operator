@@ -120,8 +120,8 @@ func basePodTemplate(a *hermesv1alpha1.HermesAgent, configHash, reloaderImage st
 	}
 
 	initContainers := []corev1.Container{initContainer}
-	if honchoInstallEnabled(a) {
-		initContainers = append(initContainers, honchoInitContainer(a))
+	if pipInstallEnabled(a) {
+		initContainers = append(initContainers, pipInstallInitContainer(a))
 	}
 
 	pod := corev1.PodTemplateSpec{

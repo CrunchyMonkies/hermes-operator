@@ -190,6 +190,16 @@ type SkillsSpec struct {
 
 // PackagesSpec declares runtime package installation.
 type PackagesSpec struct {
+	// pip packages installed (via an init container) into the python user-site on
+	// the shared PVC, persisted across restarts; the agent imports them via
+	// PYTHONPATH. honcho-ai is added automatically when honcho is in use.
+	// +optional
+	Pip []string `json:"pip,omitempty"`
+	// pipImage is the python image for the pip-install init container (its Python
+	// must match the agent's — 3.13 at the pinned hermes tag).
+	// +kubebuilder:default="python:3.13-slim"
+	// +optional
+	PipImage string `json:"pipImage,omitempty"`
 	// brew packages installed to the shared PVC (persisted, no sudo).
 	// +optional
 	Brew []string `json:"brew,omitempty"`
@@ -289,17 +299,12 @@ type HonchoSpec struct {
 	// a self-hosted instance reached by baseURL alone.
 	// +optional
 	APIKeySecretRef *SecretKeyRef `json:"apiKeySecretRef,omitempty"`
-	// installPackage, when honcho is in use, runs an init container that pip-installs
-	// honcho-ai into the shared PVC at startup (the upstream image doesn't bundle it),
-	// persisted across restarts. Defaults true.
+	// installPackage, when honcho is in use, adds honcho-ai to the pip-install init
+	// container (the upstream image doesn't bundle it) so it's installed at startup,
+	// persisted across restarts. Defaults true. The install image is packages.pipImage.
 	// +kubebuilder:default=true
 	// +optional
 	InstallPackage *bool `json:"installPackage,omitempty"`
-	// installImage is the python image for the honcho-ai install init container
-	// (its Python must match the agent's — 3.13 at the pinned hermes tag).
-	// +kubebuilder:default="python:3.13-slim"
-	// +optional
-	InstallImage string `json:"installImage,omitempty"`
 }
 
 // CronJob is a declaratively-seeded scheduled task. See specification §12.

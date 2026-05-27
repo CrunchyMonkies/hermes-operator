@@ -205,10 +205,10 @@ func hermesEnv(a *hermesv1alpha1.HermesAgent) []corev1.EnvVar {
 			},
 		})
 	}
-	// Point Python at the honcho-ai install on the shared PVC (the install init
-	// container writes it to the dotlocal user-site).
-	if honchoInstallEnabled(a) {
-		env = append(env, corev1.EnvVar{Name: "PYTHONPATH", Value: HonchoSitePackages})
+	// Point Python at the pip-installed packages on the shared PVC (the pip-install
+	// init container writes them to the dotlocal user-site).
+	if pipInstallEnabled(a) {
+		env = append(env, corev1.EnvVar{Name: "PYTHONPATH", Value: PipSitePackages})
 	}
 
 	// User-provided env appended last (can override operator defaults by name
@@ -385,31 +385,47 @@ func honchoInUse(a *hermesv1alpha1.HermesAgent) bool {
 	return a.Spec.Honcho.BaseURL != "" || a.Spec.Honcho.APIKeySecretRef != nil
 }
 
-// honchoInstallEnabled reports whether the operator should pip-install honcho-ai
-// (honcho in use and installPackage not disabled).
+// honchoInstallEnabled reports whether honcho-ai should be installed (honcho in
+// use and installPackage not disabled).
 func honchoInstallEnabled(a *hermesv1alpha1.HermesAgent) bool {
 	return honchoInUse(a) && (a.Spec.Honcho.InstallPackage == nil || *a.Spec.Honcho.InstallPackage)
 }
 
-// honchoInitContainer pip-installs honcho-ai into the shared PVC's dotlocal
-// subPath (the python user-site) at boot — idempotent, mirroring the hand-rolled
-// install lana used. The hermes container imports it via the user-site / PYTHONPATH.
-func honchoInitContainer(a *hermesv1alpha1.HermesAgent) corev1.Container {
-	img := a.Spec.Honcho.InstallImage
+// pipPackages is the full set of pip packages installed into the shared PVC:
+// spec.packages.pip plus honcho-ai when honcho is in use.
+func pipPackages(a *hermesv1alpha1.HermesAgent) []string {
+	pkgs := append([]string(nil), a.Spec.Packages.Pip...)
+	if honchoInstallEnabled(a) {
+		pkgs = append(pkgs, HonchoPackageSpec)
+	}
+	return pkgs
+}
+
+// pipInstallEnabled reports whether the pip-install init container is needed.
+func pipInstallEnabled(a *hermesv1alpha1.HermesAgent) bool {
+	return len(pipPackages(a)) > 0
+}
+
+// pipInstallInitContainer installs pipPackages into the shared PVC's dotlocal
+// subPath (the python user-site) at boot, persisted across restarts (generalizes
+// lana's hand-rolled honcho-ai install). The hermes container imports them via
+// the user-site / PYTHONPATH.
+func pipInstallInitContainer(a *hermesv1alpha1.HermesAgent) corev1.Container {
+	img := a.Spec.Packages.PipImage
 	if img == "" {
-		img = DefaultHonchoInstallImage
+		img = DefaultPipImage
+	}
+	quoted := make([]string, 0, len(pipPackages(a)))
+	for _, p := range pipPackages(a) {
+		quoted = append(quoted, "'"+strings.ReplaceAll(p, "'", `'\''`)+"'")
 	}
 	script := fmt.Sprintf(`set -e
-TARGET=%[1]s
-if [ -f "$TARGET/honcho/__init__.py" ]; then
-  echo "honcho-ai already installed in $TARGET"
-  exit 0
-fi
+TARGET=%s
 mkdir -p "$TARGET"
-pip install --no-cache-dir --target "$TARGET" %[2]q
-`, HonchoSitePackages, HonchoPackageSpec)
+pip install --no-cache-dir --target "$TARGET" %s
+`, PipSitePackages, strings.Join(quoted, " "))
 	return corev1.Container{
-		Name:            InitHoncho,
+		Name:            InitPipInstall,
 		Image:           img,
 		ImagePullPolicy: a.Spec.ImagePullPolicy,
 		Command:         []string{"sh", "-c", script},
