@@ -390,13 +390,22 @@ func dindContainer(a *hermesv1alpha1.HermesAgent) corev1.Container {
 		mounts = append(mounts, *m)
 	}
 
+	// Pin the daemon to our socket/address; empty TLS dir disables the dind
+	// entrypoint's auto-TLS so it listens plaintext intra-pod.
+	args := []string{"--host=" + dockerHost(a)}
+	// For the unix socket, own it by the agent's GID (dockerd accepts a numeric
+	// group) so a NON-root agent — and the tool sandboxes that bind-mount it — can
+	// reach the daemon. Without this the socket is root:docker(0660) and a
+	// runAsRoot:false agent gets "permission denied". (tcp transport has no socket.)
+	if a.Spec.Runtime.Docker.SocketTransport != "tcp" {
+		args = append(args, "--group="+strconv.FormatInt(a.Spec.HermesGID, 10))
+	}
+
 	c := corev1.Container{
 		Name:            ContainerDind,
 		Image:           dindImage(a),
 		ImagePullPolicy: a.Spec.ImagePullPolicy,
-		// Pin the daemon to our socket/address; empty TLS dir disables the
-		// dind entrypoint's auto-TLS so it listens plaintext intra-pod.
-		Args: []string{"--host=" + dockerHost(a)},
+		Args:            args,
 		Env: []corev1.EnvVar{
 			{Name: "DOCKER_TLS_CERTDIR", Value: ""},
 		},

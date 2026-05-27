@@ -257,6 +257,18 @@ func TestDockerBackendInjectsDindWithPVC(t *testing.T) {
 		t.Error("non-rootless dind must be privileged")
 	}
 
+	// The unix socket is group-owned by the agent's GID so a non-root agent (and the
+	// tool sandboxes that bind-mount it) can reach the daemon.
+	hasGroup := false
+	for _, arg := range dind.Args {
+		if arg == "--group=10000" {
+			hasGroup = true
+		}
+	}
+	if !hasGroup {
+		t.Errorf("dind args missing --group=10000 for the unix socket: %v", dind.Args)
+	}
+
 	// Agent wired to the daemon over the default unix socket.
 	hermes := findContainer(tpl.Spec.Containers, ContainerHermes)
 	var dockerHostVal string
