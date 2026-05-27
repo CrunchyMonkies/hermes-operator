@@ -18,6 +18,23 @@ ENV HOMEBREW_PREFIX=/home/linuxbrew/.linuxbrew \
     HOMEBREW_NO_ANALYTICS=1
 ENV PATH="/home/linuxbrew/.linuxbrew/bin:/home/linuxbrew/.linuxbrew/sbin:${PATH}"
 
+# Put the Homebrew prefix on PATH for LOGIN shells too. The ENV above covers the
+# gateway process and non-login subprocesses, but hermes' local terminal backend
+# runs commands via `bash -l`, which re-sources /etc/profile and resets PATH —
+# dropping the prefix so brew-installed tools (kubectl, etc.) aren't found. This
+# profile.d snippet (where Homebrew's installer normally puts shellenv) restores
+# it; guarded on the runtime PVC dir so it's a no-op before the prefix is populated.
+RUN printf '%s\n' \
+    '# Homebrew on PATH for login shells (hermes local terminal runs `bash -l`).' \
+    'if [ -d /home/linuxbrew/.linuxbrew/bin ]; then' \
+    '  case ":$PATH:" in' \
+    '    *:/home/linuxbrew/.linuxbrew/bin:*) ;;' \
+    '    *) PATH="/home/linuxbrew/.linuxbrew/bin:/home/linuxbrew/.linuxbrew/sbin:$PATH"; export PATH ;;' \
+    '  esac' \
+    '  export HOMEBREW_PREFIX=/home/linuxbrew/.linuxbrew' \
+    'fi' \
+    > /etc/profile.d/hermes-brew.sh && chmod 0644 /etc/profile.d/hermes-brew.sh
+
 # Bake a Homebrew distribution at an UNMOUNTED path so the PVC overlay at
 # /home/linuxbrew/.linuxbrew does not mask it. The reloader sidecar copies this
 # into the prefix on first boot (idempotent), as the hermes user, no sudo.
