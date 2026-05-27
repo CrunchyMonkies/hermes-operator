@@ -99,6 +99,22 @@ func renderTyped(spec *hermesv1alpha1.HermesAgentSpec) map[string]any {
 	putNonZeroInt(terminal, "timeout", int64(spec.Runtime.TerminalTimeout))
 	if spec.Runtime.TerminalBackend == "docker" {
 		terminal["docker_mount_cwd_to_workspace"] = spec.Runtime.Docker.MountCwdToWorkspace
+		// In docker mode tools run in dind-spawned containers that inherit neither
+		// ~/.kube/config nor the projected SA token. Both live on the dind daemon's
+		// filesystem (the shared PVC is mounted at the identical /opt/data, and dind
+		// is a pod container so it has /var/run/secrets/...), so bind-mount them into
+		// every tool container, point KUBECONFIG at the config, and share the pod
+		// network so kubectl can resolve/reach kubernetes.default.svc. extraConfig
+		// can override any of these.
+		if spec.Kubeconfig.Enabled {
+			const saDir = "/var/run/secrets/kubernetes.io/serviceaccount"
+			terminal["docker_volumes"] = []string{
+				"/opt/data/.kube/config:/root/.kube/config:ro",
+				saDir + ":" + saDir + ":ro",
+			}
+			terminal["docker_env"] = map[string]string{"KUBECONFIG": "/root/.kube/config"}
+			terminal["docker_extra_args"] = []string{"--network=host"}
+		}
 	}
 	putSection(root, "terminal", terminal)
 

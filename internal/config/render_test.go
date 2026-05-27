@@ -112,6 +112,53 @@ func TestRenderTypedKeys(t *testing.T) {
 	}
 }
 
+func TestKubeconfigDockerVolumesRendered(t *testing.T) {
+	spec := &hermesv1alpha1.HermesAgentSpec{
+		Runtime:    hermesv1alpha1.RuntimeSpec{TerminalBackend: "docker"},
+		Kubeconfig: hermesv1alpha1.KubeconfigSpec{Enabled: true},
+	}
+	out, err := RenderConfigYAML(spec)
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	terminal := mustParse(t, out)["terminal"].(map[string]any)
+
+	vols, ok := terminal["docker_volumes"].([]any)
+	if !ok || len(vols) != 2 {
+		t.Fatalf("docker_volumes = %v", terminal["docker_volumes"])
+	}
+	if vols[0] != "/opt/data/.kube/config:/root/.kube/config:ro" {
+		t.Errorf("kubeconfig mount = %v", vols[0])
+	}
+	if vols[1] != "/var/run/secrets/kubernetes.io/serviceaccount:/var/run/secrets/kubernetes.io/serviceaccount:ro" {
+		t.Errorf("sa-token mount = %v", vols[1])
+	}
+	if denv := terminal["docker_env"].(map[string]any); denv["KUBECONFIG"] != "/root/.kube/config" {
+		t.Errorf("docker_env.KUBECONFIG = %v", denv["KUBECONFIG"])
+	}
+	if args := terminal["docker_extra_args"].([]any); len(args) != 1 || args[0] != "--network=host" {
+		t.Errorf("docker_extra_args = %v", terminal["docker_extra_args"])
+	}
+}
+
+func TestKubeconfigDockerVolumesAbsentOtherwise(t *testing.T) {
+	// docker backend but kubeconfig disabled -> no kube mounts.
+	out, _ := RenderConfigYAML(&hermesv1alpha1.HermesAgentSpec{
+		Runtime: hermesv1alpha1.RuntimeSpec{TerminalBackend: "docker"},
+	})
+	if _, ok := mustParse(t, out)["terminal"].(map[string]any)["docker_volumes"]; ok {
+		t.Error("docker_volumes should be absent when kubeconfig disabled")
+	}
+	// local backend with kubeconfig -> no docker keys.
+	out2, _ := RenderConfigYAML(&hermesv1alpha1.HermesAgentSpec{
+		Runtime:    hermesv1alpha1.RuntimeSpec{TerminalBackend: "local"},
+		Kubeconfig: hermesv1alpha1.KubeconfigSpec{Enabled: true},
+	})
+	if _, ok := mustParse(t, out2)["terminal"].(map[string]any)["docker_volumes"]; ok {
+		t.Error("docker_volumes should be absent for local backend")
+	}
+}
+
 func TestExtraConfigMergeTypedWins(t *testing.T) {
 	spec := &hermesv1alpha1.HermesAgentSpec{
 		Model:                 hermesv1alpha1.ModelSpec{Default: "typed-model"},
