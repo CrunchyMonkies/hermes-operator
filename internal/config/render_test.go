@@ -228,16 +228,23 @@ func TestKubeconfigDockerVolumesRendered(t *testing.T) {
 	terminal := mustParse(t, out)["terminal"].(map[string]any)
 
 	vols, ok := terminal["docker_volumes"].([]any)
-	if !ok || len(vols) != 2 {
+	if !ok || len(vols) != 3 { // dind socket + kubeconfig + sa token
 		t.Fatalf("docker_volumes = %v", terminal["docker_volumes"])
 	}
-	if vols[0] != "/opt/data/.kube/config:/root/.kube/config:ro" {
-		t.Errorf("kubeconfig mount = %v", vols[0])
+	if vols[0] != "/var/run/dind/docker.sock:/var/run/dind/docker.sock" {
+		t.Errorf("dind socket mount = %v", vols[0])
 	}
-	if vols[1] != "/var/run/secrets/kubernetes.io/serviceaccount:/var/run/secrets/kubernetes.io/serviceaccount:ro" {
-		t.Errorf("sa-token mount = %v", vols[1])
+	if vols[1] != "/opt/data/.kube/config:/root/.kube/config:ro" {
+		t.Errorf("kubeconfig mount = %v", vols[1])
 	}
-	if denv := terminal["docker_env"].(map[string]any); denv["KUBECONFIG"] != "/root/.kube/config" {
+	if vols[2] != "/var/run/secrets/kubernetes.io/serviceaccount:/var/run/secrets/kubernetes.io/serviceaccount:ro" {
+		t.Errorf("sa-token mount = %v", vols[2])
+	}
+	denv := terminal["docker_env"].(map[string]any)
+	if denv["DOCKER_HOST"] != "unix:///var/run/dind/docker.sock" {
+		t.Errorf("docker_env.DOCKER_HOST = %v", denv["DOCKER_HOST"])
+	}
+	if denv["KUBECONFIG"] != "/root/.kube/config" {
 		t.Errorf("docker_env.KUBECONFIG = %v", denv["KUBECONFIG"])
 	}
 	if args := terminal["docker_extra_args"].([]any); len(args) != 1 || args[0] != "--network=host" {
@@ -256,14 +263,19 @@ func TestBrewMountedIntoDockerToolContainers(t *testing.T) {
 	terminal := mustParse(t, out)["terminal"].(map[string]any)
 
 	vols := terminal["docker_volumes"].([]any)
-	if len(vols) != 1 || vols[0] != "/home/linuxbrew/.linuxbrew:/home/linuxbrew/.linuxbrew:ro" {
-		t.Errorf("brew prefix mount = %v", terminal["docker_volumes"])
+	if len(vols) != 2 || vols[0] != "/var/run/dind/docker.sock:/var/run/dind/docker.sock" ||
+		vols[1] != "/home/linuxbrew/.linuxbrew:/home/linuxbrew/.linuxbrew:ro" {
+		t.Errorf("docker_volumes = %v", terminal["docker_volumes"])
 	}
 	denv := terminal["docker_env"].(map[string]any)
 	if denv["PATH"] != "/home/linuxbrew/.linuxbrew/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" {
 		t.Errorf("docker_env.PATH = %v", denv["PATH"])
 	}
-	// local backend -> brew not mounted into tool containers (no docker sandbox).
+	// unix transport + no kubeconfig -> the socket is bind-mounted; no --network=host needed.
+	if _, ok := terminal["docker_extra_args"]; ok {
+		t.Errorf("docker_extra_args should be absent, got %v", terminal["docker_extra_args"])
+	}
+	// local backend -> no docker sandbox wiring at all.
 	out2, _ := RenderConfigYAML(&hermesv1alpha1.HermesAgentSpec{
 		Runtime:  hermesv1alpha1.RuntimeSpec{TerminalBackend: "local"},
 		Packages: hermesv1alpha1.PackagesSpec{Brew: []string{"kubectl"}},
@@ -280,24 +292,52 @@ func TestKubeconfigAndBrewDockerEnvMerge(t *testing.T) {
 		Packages:   hermesv1alpha1.PackagesSpec{Brew: []string{"kubectl"}},
 	})
 	terminal := mustParse(t, out)["terminal"].(map[string]any)
-	if len(terminal["docker_volumes"].([]any)) != 3 { // kubeconfig + sa token + brew
-		t.Errorf("expected 3 docker_volumes, got %v", terminal["docker_volumes"])
+	if len(terminal["docker_volumes"].([]any)) != 4 { // dind socket + kubeconfig + sa token + brew
+		t.Errorf("expected 4 docker_volumes, got %v", terminal["docker_volumes"])
 	}
 	denv := terminal["docker_env"].(map[string]any)
-	if denv["KUBECONFIG"] == nil || denv["PATH"] == nil {
-		t.Errorf("docker_env should have both KUBECONFIG and PATH: %v", denv)
+	if denv["DOCKER_HOST"] == nil || denv["KUBECONFIG"] == nil || denv["PATH"] == nil {
+		t.Errorf("docker_env should have DOCKER_HOST, KUBECONFIG and PATH: %v", denv)
 	}
 }
 
-func TestKubeconfigDockerVolumesAbsentOtherwise(t *testing.T) {
-	// docker backend but kubeconfig disabled -> no kube mounts.
+func TestDockerSocketAlwaysExposed(t *testing.T) {
+	// docker backend, nothing else -> docker_volumes has just the dind socket (so the
+	// agent can run docker inside its sandbox), DOCKER_HOST set, no --network=host.
 	out, _ := RenderConfigYAML(&hermesv1alpha1.HermesAgentSpec{
 		Runtime: hermesv1alpha1.RuntimeSpec{TerminalBackend: "docker"},
 	})
-	if _, ok := mustParse(t, out)["terminal"].(map[string]any)["docker_volumes"]; ok {
-		t.Error("docker_volumes should be absent when kubeconfig disabled")
+	terminal := mustParse(t, out)["terminal"].(map[string]any)
+	vols, ok := terminal["docker_volumes"].([]any)
+	if !ok || len(vols) != 1 || vols[0] != "/var/run/dind/docker.sock:/var/run/dind/docker.sock" {
+		t.Errorf("docker_volumes should be just the dind socket, got %v", terminal["docker_volumes"])
 	}
-	// local backend with kubeconfig -> no docker keys.
+	if terminal["docker_env"].(map[string]any)["DOCKER_HOST"] != "unix:///var/run/dind/docker.sock" {
+		t.Errorf("DOCKER_HOST not set: %v", terminal["docker_env"])
+	}
+	if _, ok := terminal["docker_extra_args"]; ok {
+		t.Errorf("docker_extra_args should be absent (unix, no kubeconfig), got %v", terminal["docker_extra_args"])
+	}
+
+	// tcp transport -> DOCKER_HOST tcp + --network=host, no socket mount.
+	outTCP, _ := RenderConfigYAML(&hermesv1alpha1.HermesAgentSpec{
+		Runtime: hermesv1alpha1.RuntimeSpec{
+			TerminalBackend: "docker",
+			Docker:          hermesv1alpha1.DockerRuntimeSpec{SocketTransport: "tcp"},
+		},
+	})
+	tt := mustParse(t, outTCP)["terminal"].(map[string]any)
+	if tt["docker_env"].(map[string]any)["DOCKER_HOST"] != "tcp://127.0.0.1:2375" {
+		t.Errorf("tcp DOCKER_HOST = %v", tt["docker_env"])
+	}
+	if _, ok := tt["docker_volumes"]; ok {
+		t.Errorf("tcp transport should not bind the socket, got %v", tt["docker_volumes"])
+	}
+	if args := tt["docker_extra_args"].([]any); len(args) != 1 || args[0] != "--network=host" {
+		t.Errorf("tcp docker_extra_args = %v", tt["docker_extra_args"])
+	}
+
+	// local backend -> no docker keys at all.
 	out2, _ := RenderConfigYAML(&hermesv1alpha1.HermesAgentSpec{
 		Runtime:    hermesv1alpha1.RuntimeSpec{TerminalBackend: "local"},
 		Kubeconfig: hermesv1alpha1.KubeconfigSpec{Enabled: true},

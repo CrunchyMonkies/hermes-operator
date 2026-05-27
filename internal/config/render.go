@@ -125,6 +125,23 @@ func renderTyped(spec *hermesv1alpha1.HermesAgentSpec) map[string]any {
 		var dockerVolumes []string
 		dockerEnv := map[string]string{}
 		var dockerExtraArgs []string
+		networkHost := false
+
+		// Expose the dind daemon to the tool sandboxes (docker-out-of-docker) so the
+		// agent can run docker inside its sandbox. Mirrors the agent container's
+		// DOCKER_HOST. The docker CLI must also be present in the sandbox — add
+		// `docker` to packages.brew (mounted + on PATH below) or use a docker-enabled
+		// terminal.docker_image.
+		if spec.Runtime.Docker.SocketTransport == "tcp" {
+			dockerEnv["DOCKER_HOST"] = "tcp://127.0.0.1:2375"
+			networkHost = true // reach the daemon's intra-pod tcp port
+		} else {
+			// Must match resources.DindSocketDir; the daemon's unix socket is on the
+			// emptyDir the dind container mounts, so dind can bind it into tool containers.
+			const dockerSock = "/var/run/dind/docker.sock"
+			dockerVolumes = append(dockerVolumes, dockerSock+":"+dockerSock)
+			dockerEnv["DOCKER_HOST"] = "unix://" + dockerSock
+		}
 
 		if spec.Kubeconfig.Enabled {
 			const saDir = "/var/run/secrets/kubernetes.io/serviceaccount"
@@ -133,8 +150,7 @@ func renderTyped(spec *hermesv1alpha1.HermesAgentSpec) map[string]any {
 				saDir+":"+saDir+":ro",
 			)
 			dockerEnv["KUBECONFIG"] = "/root/.kube/config"
-			// Share the pod network so kubectl can resolve/reach kubernetes.default.svc.
-			dockerExtraArgs = append(dockerExtraArgs, "--network=host")
+			networkHost = true // kubectl needs to resolve/reach kubernetes.default.svc
 		}
 
 		// brew packages live on the shared PVC at the Homebrew prefix; mount it
@@ -148,6 +164,12 @@ func renderTyped(spec *hermesv1alpha1.HermesAgentSpec) map[string]any {
 			}
 			dockerVolumes = append(dockerVolumes, prefix+":"+prefix+":ro")
 			dockerEnv["PATH"] = prefix + "/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+		}
+
+		// Share the pod network when something in the sandbox needs it (the dind tcp
+		// port or kubectl reaching kubernetes.default.svc).
+		if networkHost {
+			dockerExtraArgs = append(dockerExtraArgs, "--network=host")
 		}
 
 		if len(dockerVolumes) > 0 {
