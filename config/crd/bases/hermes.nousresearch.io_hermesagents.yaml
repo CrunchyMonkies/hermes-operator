@@ -676,6 +676,31 @@ spec:
                 default: 10000
                 format: int64
                 type: integer
+              honcho:
+                description: |-
+                  honcho wires cross-session user modeling via a Honcho instance (sets
+                  HONCHO_BASE_URL and, if set, HONCHO_API_KEY on the agent).
+                properties:
+                  apiKeySecretRef:
+                    description: |-
+                      apiKeySecretRef supplies HONCHO_API_KEY (for hosted Honcho); optional for
+                      a self-hosted instance reached by baseURL alone.
+                    properties:
+                      key:
+                        description: key within the Secret holding the value.
+                        type: string
+                      name:
+                        description: name of the Secret.
+                        type: string
+                    required:
+                    - key
+                    - name
+                    type: object
+                  baseURL:
+                    description: baseURL points at the Honcho instance; renders to
+                      HONCHO_BASE_URL.
+                    type: string
+                type: object
               image:
                 description: image is the agent container image (the operator's derived
                   image with brew).
@@ -9515,6 +9540,16 @@ spec:
                     description: terminalTimeout -> terminal.timeout
                     format: int32
                     type: integer
+                type: object
+              searxng:
+                description: |-
+                  searxng wires a self-hosted SearXNG instance for free web search (sets
+                  SEARXNG_URL on the agent).
+                properties:
+                  url:
+                    description: url is the SearXNG base URL; renders to the SEARXNG_URL
+                      env.
+                    type: string
                 type: object
               serviceAccount:
                 description: ServiceAccountSpec configures the SA the agent pod +

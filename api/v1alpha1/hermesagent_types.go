@@ -62,6 +62,14 @@ type HermesAgentSpec struct {
 	Compression CompressionSpec `json:"compression,omitempty"`
 	// +optional
 	Memory MemorySpec `json:"memory,omitempty"`
+	// searxng wires a self-hosted SearXNG instance for free web search (sets
+	// SEARXNG_URL on the agent).
+	// +optional
+	Searxng SearxngSpec `json:"searxng,omitempty"`
+	// honcho wires cross-session user modeling via a Honcho instance (sets
+	// HONCHO_BASE_URL and, if set, HONCHO_API_KEY on the agent).
+	// +optional
+	Honcho HonchoSpec `json:"honcho,omitempty"`
 
 	// +optional
 	APIServer APIServerSpec `json:"apiServer,omitempty"`

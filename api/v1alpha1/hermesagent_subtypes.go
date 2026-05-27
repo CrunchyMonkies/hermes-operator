@@ -275,6 +275,24 @@ type KubeconfigSpec struct {
 	Enabled bool `json:"enabled,omitempty"`
 }
 
+// SearxngSpec configures a self-hosted SearXNG instance for web search.
+type SearxngSpec struct {
+	// url is the SearXNG base URL; renders to the SEARXNG_URL env.
+	// +optional
+	URL string `json:"url,omitempty"`
+}
+
+// HonchoSpec configures the Honcho cross-session user-modeling backend.
+type HonchoSpec struct {
+	// baseURL points at the Honcho instance; renders to HONCHO_BASE_URL.
+	// +optional
+	BaseURL string `json:"baseURL,omitempty"`
+	// apiKeySecretRef supplies HONCHO_API_KEY (for hosted Honcho); optional for
+	// a self-hosted instance reached by baseURL alone.
+	// +optional
+	APIKeySecretRef *SecretKeyRef `json:"apiKeySecretRef,omitempty"`
+}
+
 // CronJob is a declaratively-seeded scheduled task. See specification §12.
 type CronJob struct {
 	// +required

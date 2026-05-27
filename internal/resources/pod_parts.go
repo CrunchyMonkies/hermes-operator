@@ -192,6 +192,24 @@ func hermesEnv(a *hermesv1alpha1.HermesAgent) []corev1.EnvVar {
 		})
 	}
 
+	if url := a.Spec.Searxng.URL; url != "" {
+		env = append(env, corev1.EnvVar{Name: "SEARXNG_URL", Value: url})
+	}
+	if a.Spec.Honcho.BaseURL != "" {
+		env = append(env, corev1.EnvVar{Name: "HONCHO_BASE_URL", Value: a.Spec.Honcho.BaseURL})
+	}
+	if ref := a.Spec.Honcho.APIKeySecretRef; ref != nil {
+		env = append(env, corev1.EnvVar{
+			Name: "HONCHO_API_KEY",
+			ValueFrom: &corev1.EnvVarSource{
+				SecretKeyRef: &corev1.SecretKeySelector{
+					LocalObjectReference: corev1.LocalObjectReference{Name: ref.Name},
+					Key:                  ref.Key,
+				},
+			},
+		})
+	}
+
 	// User-provided env appended last (can override operator defaults by name
 	// only if duplicated; Kubernetes keeps the last occurrence).
 	env = append(env, a.Spec.Env...)
