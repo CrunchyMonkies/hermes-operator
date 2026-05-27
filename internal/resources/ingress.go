@@ -28,49 +28,45 @@ import (
 func Ingresses(a *hermesv1alpha1.HermesAgent) []*networkingv1.Ingress {
 	var out []*networkingv1.Ingress
 
+	shared := a.Spec.Ingress
+
+	// Dashboard is exposed via the shared top-level ingress (at ingress.path,
+	// default /) when both the surface and the ingress are enabled.
+	if a.Spec.Dashboard.Enabled && shared.Enabled && shared.Host != "" {
+		out = append(out, buildIngress(a, "dashboard", "dashboard", shared))
+	}
+	// API server, inheriting host/className/annotations/tls from the shared ingress.
 	if a.Spec.APIServer.Enabled && a.Spec.APIServer.Ingress.Enabled {
-		host := surfaceHost(a, a.Spec.APIServer.Ingress.Host)
-		out = append(out, buildIngress(a, "api", "api", host, a.Spec.APIServer.Ingress.Path, a.Spec.APIServer.Ingress))
+		in := mergedIngress(shared, a.Spec.APIServer.Ingress)
+		if in.Host != "" {
+			out = append(out, buildIngress(a, "api", "api", in))
+		}
 	}
-	if a.Spec.Dashboard.Enabled && a.Spec.Dashboard.Ingress.Enabled {
-		host := surfaceHost(a, a.Spec.Dashboard.Ingress.Host)
-		out = append(out, buildIngress(a, "dashboard", "dashboard", host, a.Spec.Dashboard.Ingress.Path, a.Spec.Dashboard.Ingress))
-	}
+	// Channel webhooks, inheriting the shared ingress; webhook-capable channels
+	// default to /webhooks/<type> unless an explicit non-root path is set.
 	whPorts := resolvedWebhookPorts(a)
 	for i, ch := range a.Spec.Channels {
 		if !ch.Ingress.Enabled || whPorts[i] <= 0 {
 			continue
 		}
-		host := channelEffectiveHost(a, ch)
-		if host == "" {
+		in := mergedIngress(shared, ch.Ingress)
+		if in.Host == "" {
 			continue
 		}
-		// Webhook-capable channels default to /webhooks/<type>; an explicit
-		// non-root ingress.path still wins.
-		path := ch.Ingress.Path
-		if webhookCapable(ch.Type) && (path == "" || path == "/") {
-			path = webhookPath(ch.Type)
+		if webhookCapable(ch.Type) && (in.Path == "" || in.Path == "/") {
+			in.Path = webhookPath(ch.Type)
 		}
-		out = append(out, buildIngress(a, "wh-"+ch.Type, channelPortName(ch.Type), host, path, ch.Ingress))
+		out = append(out, buildIngress(a, "wh-"+ch.Type, channelPortName(ch.Type), in))
 	}
 	return out
 }
 
-// surfaceHost resolves an ingress host: the surface's own host if set, else the
-// agent-level spec.host default.
-func surfaceHost(a *hermesv1alpha1.HermesAgent, host string) string {
-	if host != "" {
-		return host
-	}
-	return a.Spec.Host
-}
-
-func buildIngress(a *hermesv1alpha1.HermesAgent, surface, portName, host, rawPath string, in hermesv1alpha1.IngressSpec) *networkingv1.Ingress {
+func buildIngress(a *hermesv1alpha1.HermesAgent, surface, portName string, in hermesv1alpha1.IngressSpec) *networkingv1.Ingress {
 	pathType := networkingv1.PathType(in.PathType)
 	if pathType == "" {
 		pathType = networkingv1.PathTypePrefix
 	}
-	path := rawPath
+	path := in.Path
 	if path == "" {
 		path = "/"
 	}
@@ -85,7 +81,7 @@ func buildIngress(a *hermesv1alpha1.HermesAgent, surface, portName, host, rawPat
 		Spec: networkingv1.IngressSpec{
 			Rules: []networkingv1.IngressRule{
 				{
-					Host: host,
+					Host: in.Host,
 					IngressRuleValue: networkingv1.IngressRuleValue{
 						HTTP: &networkingv1.HTTPIngressRuleValue{
 							Paths: []networkingv1.HTTPIngressPath{

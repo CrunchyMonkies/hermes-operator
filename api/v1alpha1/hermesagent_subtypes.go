@@ -114,8 +114,6 @@ type DashboardSpec struct {
 	Port int32 `json:"port,omitempty"`
 	// +optional
 	Service ServiceSpec `json:"service,omitempty"`
-	// +optional
-	Ingress IngressSpec `json:"ingress,omitempty"`
 }
 
 // ChannelSpec binds one messaging platform. See specification §3.3 for the

@@ -374,62 +374,6 @@ spec:
                   host:
                     default: 0.0.0.0
                     type: string
-                  ingress:
-                    description: |-
-                      IngressSpec configures an optional Ingress for an HTTP surface. The operator
-                      owns the rendered Ingress object (owner-ref'd) and merges annotations
-                      verbatim so it stays controller-agnostic. See specification §3.5.
-                    properties:
-                      annotations:
-                        additionalProperties:
-                          type: string
-                        description: |-
-                          annotations are merged verbatim onto the Ingress object (nginx, Traefik,
-                          cert-manager, external-dns, auth, rate-limit, body-size, …).
-                        type: object
-                      className:
-                        description: className maps to spec.ingressClassName on the
-                          Ingress.
-                        type: string
-                      enabled:
-                        default: false
-                        description: enabled toggles rendering of an Ingress for this
-                          surface.
-                        type: boolean
-                      host:
-                        description: host is the Ingress host. Required when enabled.
-                        type: string
-                      path:
-                        default: /
-                        description: path is the HTTP path to route to this surface.
-                        type: string
-                      pathType:
-                        default: Prefix
-                        description: pathType is the Kubernetes Ingress path matching
-                          mode.
-                        enum:
-                        - Exact
-                        - Prefix
-                        - ImplementationSpecific
-                        type: string
-                      tls:
-                        description: |-
-                          tls lists TLS blocks rendered onto the Ingress. secretName may reference a
-                          Secret that cert-manager creates later (existence not required at admission).
-                        items:
-                          description: IngressTLS mirrors networkingv1.IngressTLS.
-                          properties:
-                            hosts:
-                              description: hosts included in the TLS certificate.
-                              items:
-                                type: string
-                              type: array
-                            secretName:
-                              description: secretName names the TLS Secret.
-                              type: string
-                          type: object
-                        type: array
-                    type: object
                   port:
                     default: 9119
                     format: int32
@@ -718,15 +662,6 @@ spec:
                       persisted across restarts. Defaults true. The install image is packages.pipImage.
                     type: boolean
                 type: object
-              host:
-                description: |-
-                  host is the base hostname for this agent's HTTP surfaces. When set, it is
-                  the default Ingress host for any surface (apiServer, dashboard, channel
-                  webhook) whose own ingress.host is empty, and it is the host used for the
-                  auto-generated webhook Ingress of webhook-capable channels (e.g. telegram),
-                  which is routed at /webhooks/<channel>. A per-surface ingress.host still
-                  overrides it.
-                type: string
               image:
                 description: image is the agent container image (the operator's derived
                   image with brew).
@@ -754,6 +689,64 @@ spec:
                   type: object
                   x-kubernetes-map-type: atomic
                 type: array
+              ingress:
+                description: |-
+                  ingress is the agent's single, shared Ingress configuration. Its host,
+                  className, annotations, tls, and pathType are the defaults for every HTTP
+                  surface; apiServer and channel-webhook ingresses inherit them unless they
+                  set their own. When ingress.enabled (and dashboard.enabled), the dashboard
+                  is exposed at ingress.path (default /). ingress.host is the base hostname,
+                  also used for webhook-capable channels' auto Ingress at /webhooks/<channel>.
+                properties:
+                  annotations:
+                    additionalProperties:
+                      type: string
+                    description: |-
+                      annotations are merged verbatim onto the Ingress object (nginx, Traefik,
+                      cert-manager, external-dns, auth, rate-limit, body-size, …).
+                    type: object
+                  className:
+                    description: className maps to spec.ingressClassName on the Ingress.
+                    type: string
+                  enabled:
+                    default: false
+                    description: enabled toggles rendering of an Ingress for this
+                      surface.
+                    type: boolean
+                  host:
+                    description: host is the Ingress host. Required when enabled.
+                    type: string
+                  path:
+                    default: /
+                    description: path is the HTTP path to route to this surface.
+                    type: string
+                  pathType:
+                    default: Prefix
+                    description: pathType is the Kubernetes Ingress path matching
+                      mode.
+                    enum:
+                    - Exact
+                    - Prefix
+                    - ImplementationSpecific
+                    type: string
+                  tls:
+                    description: |-
+                      tls lists TLS blocks rendered onto the Ingress. secretName may reference a
+                      Secret that cert-manager creates later (existence not required at admission).
+                    items:
+                      description: IngressTLS mirrors networkingv1.IngressTLS.
+                      properties:
+                        hosts:
+                          description: hosts included in the TLS certificate.
+                          items:
+                            type: string
+                          type: array
+                        secretName:
+                          description: secretName names the TLS Secret.
+                          type: string
+                      type: object
+                    type: array
+                type: object
               kubeconfig:
                 description: |-
                   kubeconfig, when enabled, writes an in-cluster kubeconfig to ~/.kube/config
@@ -9750,23 +9743,20 @@ spec:
                 ''localhost'')'
             - message: probes.mode=http requires apiServer.enabled
               rule: self.probes.mode != 'http' || self.apiServer.enabled
+            - message: ingress.enabled requires dashboard.enabled and ingress.host
+              rule: '!self.ingress.enabled || (self.dashboard.enabled && has(self.ingress.host)
+                && size(self.ingress.host) != 0)'
             - message: apiServer.ingress.enabled requires apiServer.enabled and a
-                host (apiServer.ingress.host or spec.host)
+                host (apiServer.ingress.host or spec.ingress.host)
               rule: '!has(self.apiServer.ingress) || !self.apiServer.ingress.enabled
                 || (self.apiServer.enabled && ((has(self.apiServer.ingress.host) &&
-                size(self.apiServer.ingress.host) != 0) || (has(self.host) && size(self.host)
-                != 0)))'
-            - message: dashboard.ingress.enabled requires dashboard.enabled and a
-                host (dashboard.ingress.host or spec.host)
-              rule: '!has(self.dashboard.ingress) || !self.dashboard.ingress.enabled
-                || (self.dashboard.enabled && ((has(self.dashboard.ingress.host) &&
-                size(self.dashboard.ingress.host) != 0) || (has(self.host) && size(self.host)
-                != 0)))'
+                size(self.apiServer.ingress.host) != 0) || (has(self.ingress.host)
+                && size(self.ingress.host) != 0)))'
             - message: channel ingress.enabled requires a host (channels[].ingress.host
-                or spec.host)
+                or spec.ingress.host)
               rule: '!has(self.channels) || self.channels.all(c, !has(c.ingress) ||
                 !c.ingress.enabled || ((has(c.ingress.host) && size(c.ingress.host)
-                != 0) || (has(self.host) && size(self.host) != 0)))'
+                != 0) || (has(self.ingress.host) && size(self.ingress.host) != 0)))'
             - message: each skills.custom entry must set exactly one of sourceRef
                 or inline
               rule: '!has(self.skills) || !has(self.skills.custom) || self.skills.custom.all(s,

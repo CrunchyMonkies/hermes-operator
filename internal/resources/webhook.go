@@ -62,12 +62,42 @@ func channelWantsWebhook(ch hermesv1alpha1.ChannelSpec) bool {
 }
 
 // channelEffectiveHost returns the host for a channel's webhook ingress: the
-// channel's own ingress.host if set, else the agent-level spec.host.
+// channel's own ingress.host if set, else the shared spec.ingress.host.
 func channelEffectiveHost(a *hermesv1alpha1.HermesAgent, ch hermesv1alpha1.ChannelSpec) string {
 	if ch.Ingress.Host != "" {
 		return ch.Ingress.Host
 	}
-	return a.Spec.Host
+	return a.Spec.Ingress.Host
+}
+
+// mergedIngress overlays a per-surface IngressSpec onto the shared spec.ingress:
+// host/className/pathType/tls are inherited when the surface leaves them unset,
+// and annotations are merged (surface keys win). enabled and path stay per-surface.
+func mergedIngress(shared, surface hermesv1alpha1.IngressSpec) hermesv1alpha1.IngressSpec {
+	out := surface
+	if out.Host == "" {
+		out.Host = shared.Host
+	}
+	if out.ClassName == "" {
+		out.ClassName = shared.ClassName
+	}
+	if out.PathType == "" {
+		out.PathType = shared.PathType
+	}
+	if len(out.TLS) == 0 {
+		out.TLS = shared.TLS
+	}
+	if len(shared.Annotations) > 0 || len(surface.Annotations) > 0 {
+		merged := make(map[string]string, len(shared.Annotations)+len(surface.Annotations))
+		for k, v := range shared.Annotations {
+			merged[k] = v
+		}
+		for k, v := range surface.Annotations {
+			merged[k] = v
+		}
+		out.Annotations = merged
+	}
+	return out
 }
 
 // webhookPath is the HTTP path a channel's inbound webhook is routed at.

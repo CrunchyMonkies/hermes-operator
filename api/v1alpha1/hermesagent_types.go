@@ -30,9 +30,9 @@ import (
 // +kubebuilder:validation:XValidation:rule="(has(self.storage.existingClaim) && size(self.storage.existingClaim) != 0) != (has(self.storage.size) || (has(self.storage.storageClassName) && size(self.storage.storageClassName) != 0))",message="storage.existingClaim is mutually exclusive with storage.size/storageClassName; set exactly one"
 // +kubebuilder:validation:XValidation:rule="!self.apiServer.enabled || (has(self.apiServer.keySecretRef) && self.apiServer.host != '127.0.0.1' && self.apiServer.host != 'localhost')",message="apiServer.enabled requires keySecretRef and a non-localhost host"
 // +kubebuilder:validation:XValidation:rule="self.probes.mode != 'http' || self.apiServer.enabled",message="probes.mode=http requires apiServer.enabled"
-// +kubebuilder:validation:XValidation:rule="!has(self.apiServer.ingress) || !self.apiServer.ingress.enabled || (self.apiServer.enabled && ((has(self.apiServer.ingress.host) && size(self.apiServer.ingress.host) != 0) || (has(self.host) && size(self.host) != 0)))",message="apiServer.ingress.enabled requires apiServer.enabled and a host (apiServer.ingress.host or spec.host)"
-// +kubebuilder:validation:XValidation:rule="!has(self.dashboard.ingress) || !self.dashboard.ingress.enabled || (self.dashboard.enabled && ((has(self.dashboard.ingress.host) && size(self.dashboard.ingress.host) != 0) || (has(self.host) && size(self.host) != 0)))",message="dashboard.ingress.enabled requires dashboard.enabled and a host (dashboard.ingress.host or spec.host)"
-// +kubebuilder:validation:XValidation:rule="!has(self.channels) || self.channels.all(c, !has(c.ingress) || !c.ingress.enabled || ((has(c.ingress.host) && size(c.ingress.host) != 0) || (has(self.host) && size(self.host) != 0)))",message="channel ingress.enabled requires a host (channels[].ingress.host or spec.host)"
+// +kubebuilder:validation:XValidation:rule="!self.ingress.enabled || (self.dashboard.enabled && has(self.ingress.host) && size(self.ingress.host) != 0)",message="ingress.enabled requires dashboard.enabled and ingress.host"
+// +kubebuilder:validation:XValidation:rule="!has(self.apiServer.ingress) || !self.apiServer.ingress.enabled || (self.apiServer.enabled && ((has(self.apiServer.ingress.host) && size(self.apiServer.ingress.host) != 0) || (has(self.ingress.host) && size(self.ingress.host) != 0)))",message="apiServer.ingress.enabled requires apiServer.enabled and a host (apiServer.ingress.host or spec.ingress.host)"
+// +kubebuilder:validation:XValidation:rule="!has(self.channels) || self.channels.all(c, !has(c.ingress) || !c.ingress.enabled || ((has(c.ingress.host) && size(c.ingress.host) != 0) || (has(self.ingress.host) && size(self.ingress.host) != 0)))",message="channel ingress.enabled requires a host (channels[].ingress.host or spec.ingress.host)"
 // +kubebuilder:validation:XValidation:rule="!has(self.skills) || !has(self.skills.custom) || self.skills.custom.all(s, has(s.sourceRef) != (has(s.inline) && size(s.inline) != 0))",message="each skills.custom entry must set exactly one of sourceRef or inline"
 // +kubebuilder:validation:XValidation:rule="self.serviceAccount.create || (has(self.serviceAccount.name) && size(self.serviceAccount.name) != 0)",message="serviceAccount.name is required when serviceAccount.create is false"
 // +kubebuilder:validation:XValidation:rule="!has(self.kubeconfig) || !self.kubeconfig.enabled || !has(self.serviceAccount.automountToken) || self.serviceAccount.automountToken",message="kubeconfig.enabled requires the ServiceAccount token (serviceAccount.automountToken must not be false)"
@@ -71,14 +71,14 @@ type HermesAgentSpec struct {
 	// +optional
 	Honcho HonchoSpec `json:"honcho,omitempty"`
 
-	// host is the base hostname for this agent's HTTP surfaces. When set, it is
-	// the default Ingress host for any surface (apiServer, dashboard, channel
-	// webhook) whose own ingress.host is empty, and it is the host used for the
-	// auto-generated webhook Ingress of webhook-capable channels (e.g. telegram),
-	// which is routed at /webhooks/<channel>. A per-surface ingress.host still
-	// overrides it.
+	// ingress is the agent's single, shared Ingress configuration. Its host,
+	// className, annotations, tls, and pathType are the defaults for every HTTP
+	// surface; apiServer and channel-webhook ingresses inherit them unless they
+	// set their own. When ingress.enabled (and dashboard.enabled), the dashboard
+	// is exposed at ingress.path (default /). ingress.host is the base hostname,
+	// also used for webhook-capable channels' auto Ingress at /webhooks/<channel>.
 	// +optional
-	Host string `json:"host,omitempty"`
+	Ingress IngressSpec `json:"ingress,omitempty"`
 
 	// +optional
 	APIServer APIServerSpec `json:"apiServer,omitempty"`

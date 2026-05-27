@@ -53,7 +53,12 @@ func ingressBySurface(a *hermesv1alpha1.HermesAgent, surface string) *networking
 // ingress on spec.host, and sets the port + public URL env.
 func TestTelegramWebhookAutoWired(t *testing.T) {
 	a := baseAgent()
-	a.Spec.Host = testHost
+	a.Spec.Ingress = hermesv1alpha1.IngressSpec{
+		Host:        testHost,
+		ClassName:   "nginx",
+		Annotations: map[string]string{"cert-manager.io/cluster-issuer": "prod"},
+		TLS:         []hermesv1alpha1.IngressTLS{{Hosts: []string{testHost}, SecretName: "lana-tls"}},
+	}
 	a.Spec.Channels = []hermesv1alpha1.ChannelSpec{
 		{Type: "telegram", Enabled: true, Ingress: hermesv1alpha1.IngressSpec{Enabled: true}},
 	}
@@ -72,13 +77,23 @@ func TestTelegramWebhookAutoWired(t *testing.T) {
 	}
 	rule := ing.Spec.Rules[0]
 	if rule.Host != testHost {
-		t.Errorf("ingress host = %q, want spec.host", rule.Host)
+		t.Errorf("ingress host = %q, want spec.ingress.host", rule.Host)
 	}
 	if got := rule.HTTP.Paths[0].Path; got != "/webhooks/telegram" {
 		t.Errorf("ingress path = %q, want /webhooks/telegram", got)
 	}
 	if got := rule.HTTP.Paths[0].Backend.Service.Port.Name; got != channelPortName("telegram") {
 		t.Errorf("ingress backend port name = %q", got)
+	}
+	// The webhook ingress inherits the shared ingress' className/annotations/tls.
+	if ing.Spec.IngressClassName == nil || *ing.Spec.IngressClassName != "nginx" {
+		t.Errorf("ingress className not inherited: %v", ing.Spec.IngressClassName)
+	}
+	if ing.Annotations["cert-manager.io/cluster-issuer"] != "prod" {
+		t.Errorf("ingress annotations not inherited: %v", ing.Annotations)
+	}
+	if len(ing.Spec.TLS) != 1 || ing.Spec.TLS[0].SecretName != "lana-tls" {
+		t.Errorf("ingress tls not inherited: %v", ing.Spec.TLS)
 	}
 
 	if v, _, ok := envByName(a, "TELEGRAM_WEBHOOK_PORT"); !ok || v == "0" {
@@ -98,7 +113,7 @@ func TestTelegramWebhookAutoWired(t *testing.T) {
 func TestWebhookPortAssignment(t *testing.T) {
 	// Explicit port wins, no auto-assignment.
 	a := baseAgent()
-	a.Spec.Host = testHost
+	a.Spec.Ingress.Host = testHost
 	a.Spec.Channels = []hermesv1alpha1.ChannelSpec{
 		{Type: "telegram", Enabled: true, WebhookPort: 9001, Ingress: hermesv1alpha1.IngressSpec{Enabled: true}},
 	}
@@ -111,7 +126,7 @@ func TestWebhookPortAssignment(t *testing.T) {
 
 	// Auto-assignment skips a port reserved by the apiServer and is stable.
 	b := baseAgent()
-	b.Spec.Host = "h.example.com"
+	b.Spec.Ingress.Host = testHost
 	b.Spec.APIServer = hermesv1alpha1.APIServerSpec{Enabled: true, Port: WebhookPortBase}
 	b.Spec.Channels = []hermesv1alpha1.ChannelSpec{
 		{Type: "telegram", Enabled: true, Ingress: hermesv1alpha1.IngressSpec{Enabled: true}},
@@ -125,11 +140,11 @@ func TestWebhookPortAssignment(t *testing.T) {
 	}
 }
 
-// Outbound-only channels are never auto-wired even with ingress.enabled + spec.host,
-// and a polling (ingress-off) telegram gets no webhook env/objects.
+// Outbound-only channels are never auto-wired even with ingress.enabled + a shared
+// host, and a polling (ingress-off) telegram gets no webhook env/objects.
 func TestNonWebhookChannelsNotWired(t *testing.T) {
 	a := baseAgent()
-	a.Spec.Host = testHost
+	a.Spec.Ingress.Host = testHost
 	a.Spec.Channels = []hermesv1alpha1.ChannelSpec{
 		{Type: "discord", Enabled: true, Ingress: hermesv1alpha1.IngressSpec{Enabled: true}},
 		{Type: "slack", Enabled: true, Ingress: hermesv1alpha1.IngressSpec{Enabled: true}},
@@ -145,7 +160,7 @@ func TestNonWebhookChannelsNotWired(t *testing.T) {
 	if ingressBySurface(a, "wh-discord") != nil || ingressBySurface(a, "wh-slack") != nil {
 		t.Error("outbound-only channels must not get a webhook Ingress")
 	}
-	// Polling telegram: spec.host set but ingress off -> no webhook flip (the lana guard).
+	// Polling telegram: shared host set but ingress off -> no webhook flip (the lana guard).
 	if ingressBySurface(a, "wh-telegram") != nil {
 		t.Error("polling telegram must not get a webhook Ingress")
 	}
@@ -157,26 +172,23 @@ func TestNonWebhookChannelsNotWired(t *testing.T) {
 	}
 }
 
-// apiServer and dashboard ingresses inherit spec.host when their own host is empty,
-// and a per-surface host still overrides it.
-func TestSurfaceHostDefaultsToSpecHost(t *testing.T) {
+// The dashboard is exposed via the shared spec.ingress (inheriting its host); a
+// per-surface ingress.host (here on apiServer) still overrides the shared host.
+func TestSharedIngressHostInheritance(t *testing.T) {
 	a := baseAgent()
-	a.Spec.Host = "base.example.com"
+	a.Spec.Ingress = hermesv1alpha1.IngressSpec{Enabled: true, Host: "base.example.com"}
+	a.Spec.Dashboard = hermesv1alpha1.DashboardSpec{Enabled: true}
 	a.Spec.APIServer = hermesv1alpha1.APIServerSpec{
 		Enabled: true,
-		Ingress: hermesv1alpha1.IngressSpec{Enabled: true},
-	}
-	a.Spec.Dashboard = hermesv1alpha1.DashboardSpec{
-		Enabled: true,
-		Ingress: hermesv1alpha1.IngressSpec{Enabled: true, Host: "dash.example.com"},
+		Ingress: hermesv1alpha1.IngressSpec{Enabled: true, Host: "api.example.com"},
 	}
 
-	api := ingressBySurface(a, "api")
-	if api == nil || api.Spec.Rules[0].Host != "base.example.com" {
-		t.Errorf("apiServer ingress should inherit spec.host, got %v", api)
-	}
 	dash := ingressBySurface(a, "dashboard")
-	if dash == nil || dash.Spec.Rules[0].Host != "dash.example.com" {
-		t.Errorf("dashboard ingress own host should win, got %v", dash)
+	if dash == nil || dash.Spec.Rules[0].Host != "base.example.com" {
+		t.Errorf("dashboard ingress should use shared spec.ingress.host, got %v", dash)
+	}
+	api := ingressBySurface(a, "api")
+	if api == nil || api.Spec.Rules[0].Host != "api.example.com" {
+		t.Errorf("apiServer ingress own host should override shared, got %v", api)
 	}
 }
