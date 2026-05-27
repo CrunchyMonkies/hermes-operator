@@ -462,6 +462,48 @@ pip install --no-cache-dir --target "$TARGET" %s
 	}
 }
 
+// singularityInstallEnabled reports whether the operator should install Apptainer
+// (terminalBackend=singularity and runtime.installDeps not disabled).
+func singularityInstallEnabled(a *hermesv1alpha1.HermesAgent) bool {
+	return a.Spec.Runtime.TerminalBackend == "singularity" &&
+		(a.Spec.Runtime.InstallDeps == nil || *a.Spec.Runtime.InstallDeps)
+}
+
+// apptainerInitContainer installs Apptainer (for the singularity backend) onto
+// the shared PVC at boot using Apptainer's official unprivileged, relocatable
+// installer — idempotent, run as the hermes user — and symlinks the binary into
+// ~/.local/bin (already on PATH). Running containers still needs the node to
+// allow unprivileged user namespaces.
+func apptainerInitContainer(a *hermesv1alpha1.HermesAgent) corev1.Container {
+	img := a.Spec.Runtime.Singularity.InstallImage
+	if img == "" {
+		img = DefaultSingularityInstallImage
+	}
+	script := fmt.Sprintf(`set -e
+PREFIX=%[1]s
+if [ ! -x "$PREFIX/bin/apptainer" ]; then
+  curl -fsSL %[2]s | bash -s - "$PREFIX"
+fi
+mkdir -p %[3]s
+ln -sf "$PREFIX/bin/apptainer" %[3]s/apptainer
+ln -sf "$PREFIX/bin/apptainer" %[3]s/singularity
+`, ApptainerPrefix, ApptainerInstallScriptURL, DotLocalBin)
+	return corev1.Container{
+		Name:            InitApptainer,
+		Image:           img,
+		ImagePullPolicy: a.Spec.ImagePullPolicy,
+		Command:         []string{"sh", "-c", script},
+		VolumeMounts: []corev1.VolumeMount{
+			{Name: VolShared, MountPath: HermesHome, SubPath: SubPathData},
+			{Name: VolShared, MountPath: DotLocalPath, SubPath: SubPathLocal},
+		},
+		SecurityContext: &corev1.SecurityContext{
+			RunAsUser:  ptr.To(a.Spec.HermesUID),
+			RunAsGroup: ptr.To(a.Spec.HermesGID),
+		},
+	}
+}
+
 // configInitCommand copies the operator-rendered config files onto the writable
 // PVC at boot (avoids read-only subPath ConfigMap mounts and the chmod caveat,
 // spec §4.3 / open question #2). Re-applied every start ⇒ operator-owned config.

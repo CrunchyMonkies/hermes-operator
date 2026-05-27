@@ -41,6 +41,7 @@ const (
 	ContainerDind     = "dind"
 	InitConfig        = "config-init"
 	InitPipInstall    = "pip-install"
+	InitApptainer     = "install-apptainer"
 
 	// Volume names.
 	VolShared     = "shared-data"
@@ -84,6 +85,17 @@ const (
 	DefaultPipImage   = "python:3.13-slim"
 	PipSitePackages   = DotLocalPath + "/lib/python3.13/site-packages"
 	HonchoPackageSpec = "honcho-ai==2.0.1"
+
+	// DotLocalBin is the agent's ~/.local/bin (already on PATH per the upstream
+	// image); the operator symlinks installed CLIs (e.g. apptainer) into it.
+	DotLocalBin = DotLocalPath + "/bin"
+
+	// Apptainer (singularity backend). Not bundled and not a pip/apt package, so
+	// the operator runs Apptainer's official unprivileged, relocatable installer
+	// into a prefix on the shared PVC and symlinks the binary onto PATH.
+	DefaultSingularityInstallImage = "rockylinux:9"
+	ApptainerPrefix                = HermesHome + "/apptainer"
+	ApptainerInstallScriptURL      = "https://raw.githubusercontent.com/apptainer/apptainer/main/tools/install-unprivileged.sh"
 
 	// Default DinD images (mirror the CRD defaults / spec §11.2). The rootless
 	// variant is selected when runtime.docker.rootless is set and the image is

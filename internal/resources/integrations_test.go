@@ -202,3 +202,46 @@ func TestPipDepsDeduped(t *testing.T) {
 		t.Errorf("aiohttp should appear once, got %d:\n%s", n, s)
 	}
 }
+
+func TestSingularityApptainerInstall(t *testing.T) {
+	a := baseAgent()
+	a.Spec.Runtime.TerminalBackend = "singularity"
+	dep, err := Deployment(a, "h", "")
+	if err != nil {
+		t.Fatalf("Deployment: %v", err)
+	}
+	ic := findContainer(dep.Spec.Template.Spec.InitContainers, InitApptainer)
+	if ic == nil {
+		t.Fatal("install-apptainer init missing for the singularity backend")
+	}
+	if ic.Image != DefaultSingularityInstallImage {
+		t.Errorf("install image = %q", ic.Image)
+	}
+	s := ic.Command[len(ic.Command)-1]
+	for _, want := range []string{
+		ApptainerInstallScriptURL, ApptainerPrefix,
+		DotLocalBin + "/apptainer", DotLocalBin + "/singularity",
+	} {
+		if !strings.Contains(s, want) {
+			t.Errorf("apptainer init script missing %q:\n%s", want, s)
+		}
+	}
+
+	// installDeps=false -> no apptainer init.
+	off := false
+	b := baseAgent()
+	b.Spec.Runtime.TerminalBackend = "singularity"
+	b.Spec.Runtime.InstallDeps = &off
+	dep2, _ := Deployment(b, "h", "")
+	if findContainer(dep2.Spec.Template.Spec.InitContainers, InitApptainer) != nil {
+		t.Error("install-apptainer should be absent when installDeps=false")
+	}
+
+	// non-singularity backend -> no apptainer init.
+	c := baseAgent()
+	c.Spec.Runtime.TerminalBackend = "docker"
+	dep3, _ := Deployment(c, "h", "")
+	if findContainer(dep3.Spec.Template.Spec.InitContainers, InitApptainer) != nil {
+		t.Error("install-apptainer should be absent for a non-singularity backend")
+	}
+}

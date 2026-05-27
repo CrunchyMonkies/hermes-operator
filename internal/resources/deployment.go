@@ -123,6 +123,9 @@ func basePodTemplate(a *hermesv1alpha1.HermesAgent, configHash, reloaderImage st
 	if pipInstallEnabled(a) {
 		initContainers = append(initContainers, pipInstallInitContainer(a))
 	}
+	if singularityInstallEnabled(a) {
+		initContainers = append(initContainers, apptainerInitContainer(a))
+	}
 
 	pod := corev1.PodTemplateSpec{
 		ObjectMeta: metav1.ObjectMeta{

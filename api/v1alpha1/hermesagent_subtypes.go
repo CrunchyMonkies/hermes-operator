@@ -277,13 +277,29 @@ type RuntimeSpec struct {
 	Delegation DelegationSpec `json:"delegation,omitempty"`
 	// +optional
 	Docker DockerRuntimeSpec `json:"docker,omitempty"`
-	// installDeps, when true (default), pre-installs the terminal backend's pip
-	// dependencies onto the shared PVC at startup (modal/daytona/vercel_sandbox
-	// need SDKs the base image doesn't bundle). Set false to rely on hermes'
+	// +optional
+	Singularity SingularityRuntimeSpec `json:"singularity,omitempty"`
+	// installDeps, when true (default), pre-installs the terminal backend's deps
+	// onto the shared PVC at startup — the pip SDKs for modal/daytona/vercel_sandbox,
+	// or Apptainer for singularity (none are bundled). Set false to rely on hermes'
 	// runtime lazy-install instead.
 	// +kubebuilder:default=true
 	// +optional
 	InstallDeps *bool `json:"installDeps,omitempty"`
+}
+
+// SingularityRuntimeSpec configures the Apptainer install for the singularity
+// terminal backend (the binary is not bundled and is not a simple pip/apt
+// package, so the operator runs Apptainer's official unprivileged, relocatable
+// installer into the shared PVC). NOTE: running containers still requires the
+// node to allow unprivileged user namespaces.
+type SingularityRuntimeSpec struct {
+	// installImage is the image for the Apptainer install init container. It must
+	// provide curl, rpm2cpio, and cpio (the unprivileged installer needs them) —
+	// the default is a RHEL-family image that ships all three.
+	// +kubebuilder:default="rockylinux:9"
+	// +optional
+	InstallImage string `json:"installImage,omitempty"`
 }
 
 // KubeconfigSpec configures an in-cluster kubeconfig written to ~/.kube/config

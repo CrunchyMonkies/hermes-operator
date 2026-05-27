@@ -9551,11 +9551,27 @@ spec:
                   installDeps:
                     default: true
                     description: |-
-                      installDeps, when true (default), pre-installs the terminal backend's pip
-                      dependencies onto the shared PVC at startup (modal/daytona/vercel_sandbox
-                      need SDKs the base image doesn't bundle). Set false to rely on hermes'
+                      installDeps, when true (default), pre-installs the terminal backend's deps
+                      onto the shared PVC at startup — the pip SDKs for modal/daytona/vercel_sandbox,
+                      or Apptainer for singularity (none are bundled). Set false to rely on hermes'
                       runtime lazy-install instead.
                     type: boolean
+                  singularity:
+                    description: |-
+                      SingularityRuntimeSpec configures the Apptainer install for the singularity
+                      terminal backend (the binary is not bundled and is not a simple pip/apt
+                      package, so the operator runs Apptainer's official unprivileged, relocatable
+                      installer into the shared PVC). NOTE: running containers still requires the
+                      node to allow unprivileged user namespaces.
+                    properties:
+                      installImage:
+                        default: rockylinux:9
+                        description: |-
+                          installImage is the image for the Apptainer install init container. It must
+                          provide curl, rpm2cpio, and cpio (the unprivileged installer needs them) —
+                          the default is a RHEL-family image that ships all three.
+                        type: string
+                    type: object
                   terminalBackend:
                     default: local
                     description: terminalBackend selects where tools run. -> terminal.backend
