@@ -34,6 +34,23 @@ func envByName(a *hermesv1alpha1.HermesAgent, name string) (string, bool, bool) 
 	return "", false, false
 }
 
+func TestProviderKeyInjection(t *testing.T) {
+	a := baseAgent()
+	a.Spec.Model.Providers = []hermesv1alpha1.ProviderSpec{
+		{Name: "claude", KeySecretRef: &hermesv1alpha1.SecretKeyRef{Name: "llm-keys", Key: "anthropic"}},
+		{Name: "llm", BaseURL: "https://llm/v1", KeySecretRef: &hermesv1alpha1.SecretKeyRef{Name: "llm-keys", Key: "llm"}},
+		{Name: "nous"}, // OAuth, no keySecretRef -> nothing injected
+	}
+	// Built-in claude -> ANTHROPIC_API_KEY (from secret).
+	if _, fromSecret, ok := envByName(a, "ANTHROPIC_API_KEY"); !ok || !fromSecret {
+		t.Errorf("ANTHROPIC_API_KEY should be injected from a secretKeyRef (ok=%v fromSecret=%v)", ok, fromSecret)
+	}
+	// Custom llm endpoint -> derived LLM_API_KEY (from secret).
+	if _, fromSecret, ok := envByName(a, "LLM_API_KEY"); !ok || !fromSecret {
+		t.Errorf("LLM_API_KEY should be injected from a secretKeyRef (ok=%v fromSecret=%v)", ok, fromSecret)
+	}
+}
+
 func TestSearxngAndHonchoRenderEnv(t *testing.T) {
 	a := baseAgent()
 	a.Spec.Searxng.URL = "https://searxng.example/"

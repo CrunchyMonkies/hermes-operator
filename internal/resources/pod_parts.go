@@ -214,6 +214,27 @@ func hermesEnv(a *hermesv1alpha1.HermesAgent) []corev1.EnvVar {
 			},
 		})
 	}
+	// Model provider API keys: inject each declared provider's key under its
+	// resolved env var (built-in's known var, explicit keyEnv, or a derived name for
+	// custom endpoints). All are injected so hermes /model switching works. Providers
+	// without a keySecretRef or a resolvable env var (e.g. OAuth) are skipped.
+	for _, p := range a.Spec.Model.Providers {
+		ref := p.KeySecretRef
+		envName := p.KeyEnvVar()
+		if ref == nil || envName == "" {
+			continue
+		}
+		env = append(env, corev1.EnvVar{
+			Name: envName,
+			ValueFrom: &corev1.EnvVarSource{
+				SecretKeyRef: &corev1.SecretKeySelector{
+					LocalObjectReference: corev1.LocalObjectReference{Name: ref.Name},
+					Key:                  ref.Key,
+				},
+			},
+		})
+	}
+
 	// Point Python at the pip-installed packages on the shared PVC (the pip-install
 	// init container writes them to the dotlocal user-site).
 	if pipInstallEnabled(a) {

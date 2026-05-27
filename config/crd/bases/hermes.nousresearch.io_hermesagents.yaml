@@ -772,8 +772,18 @@ spec:
               model:
                 description: ModelSpec renders into config.yaml `model:`.
                 properties:
+                  apiMode:
+                    description: |-
+                      apiMode selects the wire protocol/transport for the endpoint. Optional: same
+                      inheritance as baseURL. Known values at tag v2026.5.16: chat_completions,
+                      anthropic_messages, codex_responses, bedrock_converse (re-verify on tag bump).
+                      -> model.api_mode
+                    type: string
                   baseURL:
-                    description: baseURL overrides the provider endpoint. -> model.base_url
+                    description: |-
+                      baseURL is the provider endpoint. Optional: when provider names a
+                      customProviders entry it defaults from that entry; set here only to override.
+                      -> model.base_url
                     type: string
                   contextLength:
                     description: contextLength is the total context window (hot-reloadable).
@@ -790,8 +800,87 @@ spec:
                     type: integer
                   provider:
                     default: auto
-                    description: provider routing mode. -> model.provider
+                    description: |-
+                      provider routing mode (e.g. auto), or the name of a customProviders entry to
+                      make it the active provider — the operator then fills base_url/api_mode from
+                      that entry, so they aren't repeated here. -> model.provider
                     type: string
+                  providers:
+                    description: |-
+                      providers declares the model providers available to the agent — hermes
+                      built-ins (anthropic/openai/xai/openrouter/…) and/or custom OpenAI-compatible
+                      endpoints — with their credentials and per-model context. provider selects the
+                      active one by name. See ProviderSpec.
+                    items:
+                      description: |-
+                        ProviderSpec declares one model provider — either a hermes built-in (anthropic,
+                        openai, xai, openrouter, …; baseURL omitted, hermes knows the endpoint) or a
+                        custom OpenAI-compatible endpoint (baseURL set). Custom entries render into
+                        config.yaml `custom_providers:`; built-ins do not (only their credentials are
+                        injected). Select the active provider with model.provider == name.
+                      properties:
+                        apiMode:
+                          description: |-
+                            apiMode is the wire protocol/transport (chat_completions, anthropic_messages,
+                            codex_responses, bedrock_converse). Optional; built-ins infer it.
+                          type: string
+                        baseURL:
+                          description: |-
+                            baseURL marks this as a custom OpenAI-compatible endpoint and is rendered into
+                            custom_providers[].base_url. Omit for a built-in provider.
+                          type: string
+                        keyEnv:
+                          description: |-
+                            keyEnv overrides the env var the API key is injected under. Defaults to the
+                            built-in provider's known key env var, or <NAME>_API_KEY for a custom endpoint.
+                          type: string
+                        keySecretRef:
+                          description: |-
+                            keySecretRef supplies this provider's API key; the operator injects it as an
+                            env var (see keyEnv) on the agent container. Leave unset for OAuth providers
+                            (auth via `hermes login`/auth.json) or when the key is wired via spec.env.
+                          properties:
+                            key:
+                              description: key within the Secret holding the value.
+                              type: string
+                            name:
+                              description: name of the Secret.
+                              type: string
+                          required:
+                          - key
+                          - name
+                          type: object
+                        models:
+                          description: |-
+                            models lists this provider's models and their per-model context windows
+                            (custom providers only — renders to custom_providers[].models).
+                          items:
+                            description: ProviderModelSpec is one model under a ProviderSpec.
+                            properties:
+                              contextLength:
+                                description: |-
+                                  contextLength is this model's context window in tokens.
+                                  -> custom_providers[].models.<name>.context_length
+                                format: int64
+                                type: integer
+                              name:
+                                description: name is the model id as the provider
+                                  exposes it.
+                                type: string
+                            required:
+                            - name
+                            type: object
+                          type: array
+                        name:
+                          description: |-
+                            name is the provider id: a hermes built-in name or alias (e.g. anthropic,
+                            claude, openai, grok, xai, openrouter, zai, kimi, minimax, deepseek), or an
+                            arbitrary name for a custom endpoint.
+                          type: string
+                      required:
+                      - name
+                      type: object
+                    type: array
                 type: object
               packages:
                 description: PackagesSpec declares runtime package installation.

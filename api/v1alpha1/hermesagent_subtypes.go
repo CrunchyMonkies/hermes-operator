@@ -26,19 +26,35 @@ type ModelSpec struct {
 	// default model name, e.g. anthropic/claude-opus-4.6. -> model.default
 	// +optional
 	Default string `json:"default,omitempty"`
-	// provider routing mode. -> model.provider
+	// provider routing mode (e.g. auto), or the name of a customProviders entry to
+	// make it the active provider — the operator then fills base_url/api_mode from
+	// that entry, so they aren't repeated here. -> model.provider
 	// +kubebuilder:default=auto
 	// +optional
 	Provider string `json:"provider,omitempty"`
-	// baseURL overrides the provider endpoint. -> model.base_url
+	// baseURL is the provider endpoint. Optional: when provider names a
+	// customProviders entry it defaults from that entry; set here only to override.
+	// -> model.base_url
 	// +optional
 	BaseURL string `json:"baseURL,omitempty"`
+	// apiMode selects the wire protocol/transport for the endpoint. Optional: same
+	// inheritance as baseURL. Known values at tag v2026.5.16: chat_completions,
+	// anthropic_messages, codex_responses, bedrock_converse (re-verify on tag bump).
+	// -> model.api_mode
+	// +optional
+	APIMode string `json:"apiMode,omitempty"`
 	// contextLength is the total context window (hot-reloadable). -> model.context_length
 	// +optional
 	ContextLength int64 `json:"contextLength,omitempty"`
 	// maxTokens caps output tokens. -> model.max_tokens
 	// +optional
 	MaxTokens int64 `json:"maxTokens,omitempty"`
+	// providers declares the model providers available to the agent — hermes
+	// built-ins (anthropic/openai/xai/openrouter/…) and/or custom OpenAI-compatible
+	// endpoints — with their credentials and per-model context. provider selects the
+	// active one by name. See ProviderSpec.
+	// +optional
+	Providers []ProviderSpec `json:"providers,omitempty"`
 }
 
 // AgentSpec renders into config.yaml `agent:`.

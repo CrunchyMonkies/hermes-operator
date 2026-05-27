@@ -25,6 +25,8 @@ import (
 	hermesv1alpha1 "github.com/matthew/hermes-operator/api/v1alpha1"
 )
 
+const ccMode = "chat_completions"
+
 func ptrBool(b bool) *bool    { return &b }
 func ptrStr(s string) *string { return &s }
 func ptrI32(i int32) *int32   { return &i }
@@ -38,11 +40,110 @@ func mustParse(t *testing.T, b []byte) map[string]any {
 	return out
 }
 
+func TestRenderCustomProviders(t *testing.T) {
+	// provider names the custom provider; base_url/api_mode are NOT set on model
+	// and must be derived from that provider.
+	spec := &hermesv1alpha1.HermesAgentSpec{
+		Model: hermesv1alpha1.ModelSpec{
+			Default:  "gemma-4-e4b-it",
+			Provider: "llm",
+			Providers: []hermesv1alpha1.ProviderSpec{{
+				Name:    "llm",
+				BaseURL: "https://llm.example/v1",
+				APIMode: ccMode,
+				Models: []hermesv1alpha1.ProviderModelSpec{
+					{Name: "gemma-4-e4b-it", ContextLength: 131072},
+					{Name: "qwen", ContextLength: 0}, // no per-model window -> empty map (auto-probe)
+				},
+			}},
+		},
+	}
+
+	got := mustParse(t, mustRender(t, spec))
+
+	// model.base_url / api_mode derived from the selected provider (not repeated).
+	model := got["model"].(map[string]any)
+	if model["base_url"] != "https://llm.example/v1" || model["api_mode"] != ccMode {
+		t.Errorf("model endpoint not derived from provider: %v", model)
+	}
+
+	cps, ok := got["custom_providers"].([]any)
+	if !ok || len(cps) != 1 {
+		t.Fatalf("custom_providers = %v", got["custom_providers"])
+	}
+	cp := cps[0].(map[string]any)
+	if cp["name"] != "llm" || cp["base_url"] != "https://llm.example/v1" || cp["api_mode"] != ccMode {
+		t.Errorf("provider entry fields wrong: %v", cp)
+	}
+	// No key supplied (no keyEnv/keySecretRef) -> key_env omitted (falls back to auth.json).
+	if _, ok := cp["key_env"]; ok {
+		t.Errorf("key_env should be omitted when no key is supplied, got %v", cp["key_env"])
+	}
+	models := cp["models"].(map[string]any)
+	gemma := models["gemma-4-e4b-it"].(map[string]any)
+	if v, _ := gemma["context_length"].(float64); int(v) != 131072 {
+		t.Errorf("gemma context_length = %v, want 131072", gemma["context_length"])
+	}
+	// A model without a context window renders an empty map (hermes auto-probes).
+	qwen := models["qwen"].(map[string]any)
+	if len(qwen) != 0 {
+		t.Errorf("qwen entry should be empty (no context_length), got %v", qwen)
+	}
+
+	// An explicit model.baseURL overrides the derived value.
+	spec.Model.BaseURL = "https://override/v1"
+	got2 := mustParse(t, mustRender(t, spec))
+	if got2["model"].(map[string]any)["base_url"] != "https://override/v1" {
+		t.Errorf("explicit baseURL should override derived")
+	}
+
+	// With a keySecretRef, key_env is emitted (the operator injects the key there).
+	spec.Model.BaseURL = ""
+	spec.Model.Providers[0].KeySecretRef = &hermesv1alpha1.SecretKeyRef{Name: "k", Key: "llm"}
+	got3 := mustParse(t, mustRender(t, spec))
+	cp3 := got3["custom_providers"].([]any)[0].(map[string]any)
+	if cp3["key_env"] != "LLM_API_KEY" {
+		t.Errorf("key_env = %v, want LLM_API_KEY", cp3["key_env"])
+	}
+}
+
+func TestRenderBuiltinProviderNoCustomRow(t *testing.T) {
+	// A built-in provider (no baseURL) must NOT appear in custom_providers, and the
+	// operator must not synthesize a model.base_url for it (hermes knows the URL).
+	spec := &hermesv1alpha1.HermesAgentSpec{
+		Model: hermesv1alpha1.ModelSpec{
+			Default:  "claude-opus-4-7",
+			Provider: "claude",
+			Providers: []hermesv1alpha1.ProviderSpec{{
+				Name:         "claude",
+				KeySecretRef: &hermesv1alpha1.SecretKeyRef{Name: "llm-keys", Key: "anthropic"},
+			}},
+		},
+	}
+	got := mustParse(t, mustRender(t, spec))
+	if _, ok := got["custom_providers"]; ok {
+		t.Errorf("built-in provider should not emit custom_providers: %v", got["custom_providers"])
+	}
+	if bu, ok := got["model"].(map[string]any)["base_url"]; ok {
+		t.Errorf("built-in provider should not set model.base_url, got %v", bu)
+	}
+}
+
+func mustRender(t *testing.T, spec *hermesv1alpha1.HermesAgentSpec) []byte {
+	t.Helper()
+	out, err := RenderConfigYAML(spec)
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	return out
+}
+
 func TestRenderTypedKeys(t *testing.T) {
 	spec := &hermesv1alpha1.HermesAgentSpec{
 		Model: hermesv1alpha1.ModelSpec{
 			Default:       "anthropic/claude-opus-4.6",
 			Provider:      "auto",
+			APIMode:       ccMode,
 			ContextLength: 200000,
 		},
 		Agent: hermesv1alpha1.AgentSpec{MaxTurns: 60, ReasoningEffort: "medium"},
@@ -81,6 +182,9 @@ func TestRenderTypedKeys(t *testing.T) {
 	}
 	if model["base_url"] != nil {
 		t.Errorf("empty base_url should be omitted, got %v", model["base_url"])
+	}
+	if model["api_mode"] != ccMode {
+		t.Errorf("model.api_mode = %v, want chat_completions", model["api_mode"])
 	}
 
 	comp := got["compression"].(map[string]any)

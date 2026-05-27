@@ -60,14 +60,32 @@ func renderTyped(spec *hermesv1alpha1.HermesAgentSpec) map[string]any {
 		"_config_version": ConfigVersion,
 	}
 
-	// model:
+	// model: — when provider names a CUSTOM providers entry, base_url/api_mode
+	// default from it (so they aren't repeated); an explicit value still wins.
+	// Built-in providers carry their own endpoint, so nothing is derived.
 	model := map[string]any{}
+	baseURL, apiMode := spec.Model.BaseURL, spec.Model.APIMode
+	if sel := findProvider(spec.Model.Providers, spec.Model.Provider); sel != nil && sel.IsCustom() {
+		if baseURL == "" {
+			baseURL = sel.BaseURL
+		}
+		if apiMode == "" {
+			apiMode = sel.APIMode
+		}
+	}
 	putStr(model, "default", spec.Model.Default)
 	putStr(model, "provider", spec.Model.Provider)
-	putStr(model, "base_url", spec.Model.BaseURL)
+	putStr(model, "base_url", baseURL)
+	putStr(model, "api_mode", apiMode)
 	putNonZeroInt(model, "context_length", spec.Model.ContextLength)
 	putNonZeroInt(model, "max_tokens", spec.Model.MaxTokens)
 	putSection(root, "model", model)
+
+	// custom_providers: (top-level) — CUSTOM endpoints only; built-ins aren't
+	// emitted here (hermes knows their URLs).
+	if cps := renderCustomProviders(spec.Model.Providers); len(cps) > 0 {
+		root["custom_providers"] = cps
+	}
 
 	// agent:
 	agent := map[string]any{}
@@ -175,6 +193,54 @@ func renderTyped(spec *hermesv1alpha1.HermesAgentSpec) map[string]any {
 	putSection(root, "skills", skills)
 
 	return root
+}
+
+// findProvider returns the provider whose Name matches the selector
+// (e.g. model.provider), or nil.
+func findProvider(in []hermesv1alpha1.ProviderSpec, name string) *hermesv1alpha1.ProviderSpec {
+	if name == "" {
+		return nil
+	}
+	for i := range in {
+		if in[i].Name == name {
+			return &in[i]
+		}
+	}
+	return nil
+}
+
+// renderCustomProviders emits config.yaml `custom_providers:` from the CUSTOM
+// entries (those with a baseURL); built-in providers are skipped (hermes knows
+// their endpoints). `models` becomes a map keyed by model name (the shape hermes'
+// normalizer expects); key_env is the resolved env var the operator injects into.
+func renderCustomProviders(in []hermesv1alpha1.ProviderSpec) []map[string]any {
+	out := make([]map[string]any, 0, len(in))
+	for _, cp := range in {
+		if !cp.IsCustom() {
+			continue
+		}
+		entry := map[string]any{}
+		putStr(entry, "name", cp.Name)
+		putStr(entry, "base_url", cp.BaseURL)
+		putStr(entry, "api_mode", cp.APIMode)
+		// Only point hermes at a key env var when a key is actually supplied
+		// (explicit keyEnv or an operator-injected keySecretRef); otherwise leave it
+		// unset so hermes falls back to auth.json / ambient env.
+		if cp.KeyEnv != "" || cp.KeySecretRef != nil {
+			putStr(entry, "key_env", cp.KeyEnvVar())
+		}
+		if len(cp.Models) > 0 {
+			models := map[string]any{}
+			for _, m := range cp.Models {
+				mc := map[string]any{}
+				putNonZeroInt(mc, "context_length", m.ContextLength)
+				models[m.Name] = mc
+			}
+			entry["models"] = models
+		}
+		out = append(out, entry)
+	}
+	return out
 }
 
 // RenderSoul returns the SOUL.md content (empty spec.soul yields no file).
