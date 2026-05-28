@@ -321,11 +321,12 @@ agent actually uses, so the model reports "command not found".
 
 **Fix pattern:** restore the bin dirs for login shells via `/etc/profile.d/*.sh` in
 the agent image (`images/agent/Dockerfile` → `/etc/profile.d/hermes-path.sh`) — this
-is where Homebrew's own installer puts `shellenv`. Entries are **dir-guarded** (the
-PVC prefix isn't populated until the reloader copies brew on first boot) and
-de-duplicated. To expose another PVC bin dir to the agent, add it to the
-`for _d in …` list in that snippet (and rebuild/re-pull the agent image — its tag is
-mutable, so the consuming CR needs `imagePullPolicy: Always`).
+is where Homebrew's own installer puts `shellenv`. Entries are prepended
+unconditionally (a not-yet-populated dir on PATH is harmless, so `~/.local/bin`
+stays mapped even before the first pip console-script lands) and de-duplicated. To
+expose another PVC bin dir to the agent, add it to the `for _d in …` list in that
+snippet (and rebuild/re-pull the agent image — its tag is mutable, so the consuming
+CR needs `imagePullPolicy: Always`).
 
 ## References
 

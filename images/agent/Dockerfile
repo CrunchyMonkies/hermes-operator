@@ -28,7 +28,6 @@ ENV PATH="/home/linuxbrew/.linuxbrew/bin:/home/linuxbrew/.linuxbrew/sbin:${PATH}
 RUN printf '%s\n' \
     '# Hermes/Homebrew/pip bin dirs on PATH for login shells (local terminal runs `bash -l`).' \
     'for _d in /opt/data/.local/bin /home/linuxbrew/.linuxbrew/sbin /home/linuxbrew/.linuxbrew/bin; do' \
-    '  [ -d "$_d" ] || continue' \
     '  case ":$PATH:" in *:"$_d":*) ;; *) PATH="$_d:$PATH" ;; esac' \
     'done' \
     'export PATH' \
