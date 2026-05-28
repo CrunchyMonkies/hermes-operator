@@ -301,6 +301,32 @@ export IMG=<registry>/<project>:<version>
 make docker-build docker-push IMG=$IMG
 ```
 
+## Gotchas
+
+### PATH in the agent's `local` terminal (login shell)
+
+hermes' `local` terminal backend runs the agent's commands through a **login
+shell** (`bash -l`, see `third_party/hermes-agent/tools/environments/local.py`). A
+login shell re-sources `/etc/profile`, which on the Debian base **resets PATH to a
+fixed default** — discarding the agent image's `ENV PATH` additions. So bin dirs on
+the shared PVC disappear from PATH for the agent's commands even though the gateway
+process (PID 1) and non-login subprocesses still see them:
+
+- Homebrew prefix: `/home/linuxbrew/.linuxbrew/bin` (+ `sbin`) — brew tools (`kubectl`, `jq`, `yq`, …)
+- pip user-site: `~/.local/bin` = `/opt/data/.local/bin` — pip console-scripts
+
+**Symptom:** a tool is on disk and resolves via `kubectl exec … -- bash -c '<tool>'`
+(non-login) but NOT via `bash -lc '<tool>'` (login) — and the login path is what the
+agent actually uses, so the model reports "command not found".
+
+**Fix pattern:** restore the bin dirs for login shells via `/etc/profile.d/*.sh` in
+the agent image (`images/agent/Dockerfile` → `/etc/profile.d/hermes-path.sh`) — this
+is where Homebrew's own installer puts `shellenv`. Entries are **dir-guarded** (the
+PVC prefix isn't populated until the reloader copies brew on first boot) and
+de-duplicated. To expose another PVC bin dir to the agent, add it to the
+`for _d in …` list in that snippet (and rebuild/re-pull the agent image — its tag is
+mutable, so the consuming CR needs `imagePullPolicy: Always`).
+
 ## References
 
 ### Essential Reading
