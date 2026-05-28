@@ -36,6 +36,9 @@ import (
 // +kubebuilder:validation:XValidation:rule="!has(self.skills) || !has(self.skills.custom) || self.skills.custom.all(s, has(s.sourceRef) != (has(s.inline) && size(s.inline) != 0))",message="each skills.custom entry must set exactly one of sourceRef or inline"
 // +kubebuilder:validation:XValidation:rule="self.serviceAccount.create || (has(self.serviceAccount.name) && size(self.serviceAccount.name) != 0)",message="serviceAccount.name is required when serviceAccount.create is false"
 // +kubebuilder:validation:XValidation:rule="!has(self.kubeconfig) || !self.kubeconfig.enabled || !has(self.serviceAccount.automountToken) || self.serviceAccount.automountToken",message="kubeconfig.enabled requires the ServiceAccount token (serviceAccount.automountToken must not be false)"
+// +kubebuilder:validation:XValidation:rule="!has(self.mcp) || !has(self.mcp.servers) || self.mcp.servers.all(s, (has(s.command) && size(s.command) != 0) != (has(s.url) && size(s.url) != 0))",message="each mcp.servers entry must set exactly one of command (stdio) or url (http/sse)"
+// +kubebuilder:validation:XValidation:rule="!has(self.mcp) || !has(self.mcp.servers) || self.mcp.servers.all(s, !has(s.transport) || (s.transport == 'stdio' ? (has(s.command) && size(s.command) != 0) : (has(s.url) && size(s.url) != 0)))",message="mcp.servers transport=stdio requires command; transport=http/sse requires url"
+// +kubebuilder:validation:XValidation:rule="!has(self.mcp) || !has(self.mcp.servers) || self.mcp.servers.all(s, !has(s.tools) || !((has(s.tools.include) && size(s.tools.include) != 0) && (has(s.tools.exclude) && size(s.tools.exclude) != 0)))",message="mcp.servers tools must set at most one of include or exclude"
 type HermesAgentSpec struct {
 	// image is the agent container image (the operator's derived image with brew).
 	// +required
@@ -70,6 +73,10 @@ type HermesAgentSpec struct {
 	// HONCHO_BASE_URL and, if set, HONCHO_API_KEY on the agent).
 	// +optional
 	Honcho HonchoSpec `json:"honcho,omitempty"`
+
+	// mcp configures Model Context Protocol servers (config.yaml `mcp_servers`).
+	// +optional
+	MCP MCPSpec `json:"mcp,omitempty"`
 
 	// ingress is the agent's single, shared Ingress configuration. Its host,
 	// className, annotations, tls, and pathType are the defaults for every HTTP

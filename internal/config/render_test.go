@@ -410,6 +410,94 @@ func TestVarInterpolationPassthrough(t *testing.T) {
 	}
 }
 
+func TestRenderMCPServers(t *testing.T) {
+	spec := &hermesv1alpha1.HermesAgentSpec{
+		MCP: hermesv1alpha1.MCPSpec{
+			Servers: []hermesv1alpha1.MCPServerSpec{
+				{
+					Name:                      "github",
+					Command:                   "npx",
+					Args:                      []string{"-y", "@modelcontextprotocol/server-github"},
+					Env:                       map[string]string{"GITHUB_PERSONAL_ACCESS_TOKEN": "${GH_TOKEN}"},
+					SupportsParallelToolCalls: ptrBool(true),
+					TimeoutSeconds:            ptrI32(120),
+					Tools:                     &hermesv1alpha1.MCPToolFilter{Include: []string{"create_issue"}},
+				},
+				{
+					Name:      "remote",
+					Transport: "sse",
+					URL:       "https://mcp.example.com/sse",
+					Headers:   map[string]string{"Authorization": "Bearer ${REMOTE_TOKEN}"},
+					SSLVerify: ptrBool(false),
+					Enabled:   ptrBool(false),
+					// extraConfig fills the long tail; a typed key (url) must still win.
+					ExtraConfig: &runtime.RawExtension{
+						Raw: []byte(`{"url":"https://ignored","sampling":{"enabled":true,"max_rpm":10}}`),
+					},
+				},
+			},
+		},
+	}
+
+	got := mustParse(t, mustRender(t, spec))
+	servers, ok := got["mcp_servers"].(map[string]any)
+	if !ok || len(servers) != 2 {
+		t.Fatalf("mcp_servers = %v", got["mcp_servers"])
+	}
+
+	// stdio server
+	gh := servers["github"].(map[string]any)
+	if gh["command"] != "npx" {
+		t.Errorf("github.command = %v", gh["command"])
+	}
+	if args := gh["args"].([]any); len(args) != 2 || args[0] != "-y" {
+		t.Errorf("github.args = %v", gh["args"])
+	}
+	if env := gh["env"].(map[string]any); env["GITHUB_PERSONAL_ACCESS_TOKEN"] != "${GH_TOKEN}" {
+		t.Errorf("github.env = %v (interpolation must pass through untouched)", gh["env"])
+	}
+	if gh["supports_parallel_tool_calls"] != true {
+		t.Errorf("github.supports_parallel_tool_calls = %v", gh["supports_parallel_tool_calls"])
+	}
+	if v, _ := gh["timeout"].(float64); int(v) != 120 {
+		t.Errorf("github.timeout = %v", gh["timeout"])
+	}
+	if tf := gh["tools"].(map[string]any); tf["include"].([]any)[0] != "create_issue" {
+		t.Errorf("github.tools = %v", gh["tools"])
+	}
+	if _, ok := gh["url"]; ok {
+		t.Errorf("stdio server must not render url: %v", gh["url"])
+	}
+
+	// http/sse server + per-server extraConfig (typed wins)
+	rem := servers["remote"].(map[string]any)
+	if rem["url"] != "https://mcp.example.com/sse" {
+		t.Errorf("remote.url = %v (typed must win over extraConfig)", rem["url"])
+	}
+	if rem["transport"] != "sse" {
+		t.Errorf("remote.transport = %v", rem["transport"])
+	}
+	if hdr := rem["headers"].(map[string]any); hdr["Authorization"] != "Bearer ${REMOTE_TOKEN}" {
+		t.Errorf("remote.headers = %v", rem["headers"])
+	}
+	if rem["ssl_verify"] != false {
+		t.Errorf("remote.ssl_verify = %v", rem["ssl_verify"])
+	}
+	if rem["enabled"] != false {
+		t.Errorf("remote.enabled = %v", rem["enabled"])
+	}
+	if s := rem["sampling"].(map[string]any); s["enabled"] != true {
+		t.Errorf("remote.sampling (from extraConfig) = %v", rem["sampling"])
+	}
+}
+
+func TestRenderMCPServersOmittedWhenEmpty(t *testing.T) {
+	got := mustParse(t, mustRender(t, &hermesv1alpha1.HermesAgentSpec{}))
+	if _, ok := got["mcp_servers"]; ok {
+		t.Errorf("mcp_servers should be omitted when no servers declared, got %v", got["mcp_servers"])
+	}
+}
+
 func TestConfigHashStableAndSensitive(t *testing.T) {
 	base := HashInputs{
 		ConfigYAML:     []byte("a: 1\n"),

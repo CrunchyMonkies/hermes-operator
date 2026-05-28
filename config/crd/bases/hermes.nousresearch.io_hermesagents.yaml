@@ -761,6 +761,146 @@ spec:
                       extra setup, using the pod's ServiceAccount identity.
                     type: boolean
                 type: object
+              mcp:
+                description: mcp configures Model Context Protocol servers (config.yaml
+                  `mcp_servers`).
+                properties:
+                  servers:
+                    description: servers declares MCP servers, rendered to config.yaml
+                      `mcp_servers` keyed by name.
+                    items:
+                      description: |-
+                        MCPServerSpec is one Model Context Protocol server. Set command for a stdio
+                        (subprocess) server or url for an http/sse server — exactly one. Secrets are
+                        supplied via secretEnv and referenced as ${ENVNAME} in headers/env values.
+                      properties:
+                        args:
+                          description: args for command.
+                          items:
+                            type: string
+                          type: array
+                        command:
+                          description: command launches the server subprocess (stdio
+                            transport).
+                          type: string
+                        connectTimeoutSeconds:
+                          description: connectTimeoutSeconds caps the initial connection
+                            (hermes default 60).
+                          format: int32
+                          type: integer
+                        enabled:
+                          description: enabled toggles the server (hermes default
+                            true).
+                          type: boolean
+                        env:
+                          additionalProperties:
+                            type: string
+                          description: env sets subprocess env vars; values may use
+                            ${VAR} interpolation.
+                          type: object
+                        extraConfig:
+                          description: |-
+                            extraConfig is deep-merged into this server's config map for fields not
+                            modeled above (e.g. oauth, sampling). Typed fields win on conflict.
+                          type: object
+                          x-kubernetes-preserve-unknown-fields: true
+                        headers:
+                          additionalProperties:
+                            type: string
+                          description: |-
+                            headers sent on each request; values may use ${VAR} interpolation
+                            (e.g. "Bearer ${MY_TOKEN}").
+                          type: object
+                        name:
+                          description: name keys the server in mcp_servers (must be
+                            unique).
+                          type: string
+                        secretEnv:
+                          description: |-
+                            secretEnv injects Secret-backed env vars onto the agent container so they
+                            can be referenced via ${name} in headers/env values (e.g. API tokens).
+                          items:
+                            description: |-
+                              MCPSecretEnv binds an agent-container env var to a Secret key, referenced via
+                              ${name} in an MCP server's headers/env values.
+                            properties:
+                              name:
+                                description: name of the env var to expose on the
+                                  agent container.
+                                type: string
+                              secretRef:
+                                description: secretRef is the Secret name+key supplying
+                                  the value.
+                                properties:
+                                  key:
+                                    description: key within the Secret holding the
+                                      value.
+                                    type: string
+                                  name:
+                                    description: name of the Secret.
+                                    type: string
+                                required:
+                                - key
+                                - name
+                                type: object
+                            required:
+                            - name
+                            - secretRef
+                            type: object
+                          type: array
+                          x-kubernetes-list-map-keys:
+                          - name
+                          x-kubernetes-list-type: map
+                        sslVerify:
+                          description: sslVerify toggles TLS verification for https
+                            endpoints (hermes default true).
+                          type: boolean
+                        supportsParallelToolCalls:
+                          description: supportsParallelToolCalls allows concurrent
+                            tool execution (stdio).
+                          type: boolean
+                        timeoutSeconds:
+                          description: timeoutSeconds caps a single tool call (hermes
+                            default 120).
+                          format: int32
+                          type: integer
+                        tools:
+                          description: tools filters the server's exposed tools (set
+                            include or exclude, not both).
+                          properties:
+                            exclude:
+                              description: exclude disables these tools (mutually
+                                exclusive with include).
+                              items:
+                                type: string
+                              type: array
+                            include:
+                              description: include enables only these tools (mutually
+                                exclusive with exclude).
+                              items:
+                                type: string
+                              type: array
+                          type: object
+                        transport:
+                          description: |-
+                            transport selects the transport. stdio is implied by command; url implies
+                            http unless transport=sse. Usually only needed to force sse.
+                          enum:
+                          - stdio
+                          - http
+                          - sse
+                          type: string
+                        url:
+                          description: url is the server endpoint (http/sse transport).
+                          type: string
+                      required:
+                      - name
+                      type: object
+                    type: array
+                    x-kubernetes-list-map-keys:
+                    - name
+                    x-kubernetes-list-type: map
+                type: object
               memory:
                 description: MemorySpec renders into config.yaml `memory:`.
                 properties:
@@ -9856,6 +9996,20 @@ spec:
                 must not be false)
               rule: '!has(self.kubeconfig) || !self.kubeconfig.enabled || !has(self.serviceAccount.automountToken)
                 || self.serviceAccount.automountToken'
+            - message: each mcp.servers entry must set exactly one of command (stdio)
+                or url (http/sse)
+              rule: '!has(self.mcp) || !has(self.mcp.servers) || self.mcp.servers.all(s,
+                (has(s.command) && size(s.command) != 0) != (has(s.url) && size(s.url)
+                != 0))'
+            - message: mcp.servers transport=stdio requires command; transport=http/sse
+                requires url
+              rule: '!has(self.mcp) || !has(self.mcp.servers) || self.mcp.servers.all(s,
+                !has(s.transport) || (s.transport == ''stdio'' ? (has(s.command) &&
+                size(s.command) != 0) : (has(s.url) && size(s.url) != 0)))'
+            - message: mcp.servers tools must set at most one of include or exclude
+              rule: '!has(self.mcp) || !has(self.mcp.servers) || self.mcp.servers.all(s,
+                !has(s.tools) || !((has(s.tools.include) && size(s.tools.include)
+                != 0) && (has(s.tools.exclude) && size(s.tools.exclude) != 0)))'
           status:
             description: HermesAgentStatus defines the observed state of HermesAgent.
             properties:

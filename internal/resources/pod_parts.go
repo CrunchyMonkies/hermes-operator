@@ -235,6 +235,25 @@ func hermesEnv(a *hermesv1alpha1.HermesAgent) []corev1.EnvVar {
 		})
 	}
 
+	// MCP server credentials: each server's secretEnv binds a Secret key to an env
+	// var the agent references via ${name} in headers/env (see MCPServerSpec).
+	for _, s := range a.Spec.MCP.Servers {
+		for _, se := range s.SecretEnv {
+			if se.Name == "" {
+				continue
+			}
+			env = append(env, corev1.EnvVar{
+				Name: se.Name,
+				ValueFrom: &corev1.EnvVarSource{
+					SecretKeyRef: &corev1.SecretKeySelector{
+						LocalObjectReference: corev1.LocalObjectReference{Name: se.SecretRef.Name},
+						Key:                  se.SecretRef.Key,
+					},
+				},
+			})
+		}
+	}
+
 	// Point Python at the pip-installed packages on the shared PVC (the pip-install
 	// init container writes them to the dotlocal user-site).
 	if pipInstallEnabled(a) {

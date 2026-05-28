@@ -19,6 +19,7 @@ package v1alpha1
 import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
+	"k8s.io/apimachinery/pkg/runtime"
 )
 
 // ModelSpec renders into config.yaml `model:`.
@@ -429,4 +430,99 @@ type ProbesSpec struct {
 type PresetRef struct {
 	// +required
 	Name string `json:"name"`
+}
+
+// MCPSpec configures the Model Context Protocol servers the agent connects to.
+// Each entry renders into config.yaml `mcp_servers:` keyed by name.
+type MCPSpec struct {
+	// servers declares MCP servers, rendered to config.yaml `mcp_servers` keyed by name.
+	// +optional
+	// +listType=map
+	// +listMapKey=name
+	Servers []MCPServerSpec `json:"servers,omitempty"`
+}
+
+// MCPServerSpec is one Model Context Protocol server. Set command for a stdio
+// (subprocess) server or url for an http/sse server — exactly one. Secrets are
+// supplied via secretEnv and referenced as ${ENVNAME} in headers/env values.
+type MCPServerSpec struct {
+	// name keys the server in mcp_servers (must be unique).
+	// +required
+	Name string `json:"name"`
+	// enabled toggles the server (hermes default true).
+	// +optional
+	Enabled *bool `json:"enabled,omitempty"`
+	// transport selects the transport. stdio is implied by command; url implies
+	// http unless transport=sse. Usually only needed to force sse.
+	// +kubebuilder:validation:Enum=stdio;http;sse
+	// +optional
+	Transport string `json:"transport,omitempty"`
+
+	// command launches the server subprocess (stdio transport).
+	// +optional
+	Command string `json:"command,omitempty"`
+	// args for command.
+	// +optional
+	Args []string `json:"args,omitempty"`
+	// env sets subprocess env vars; values may use ${VAR} interpolation.
+	// +optional
+	Env map[string]string `json:"env,omitempty"`
+
+	// url is the server endpoint (http/sse transport).
+	// +optional
+	URL string `json:"url,omitempty"`
+	// headers sent on each request; values may use ${VAR} interpolation
+	// (e.g. "Bearer ${MY_TOKEN}").
+	// +optional
+	Headers map[string]string `json:"headers,omitempty"`
+	// sslVerify toggles TLS verification for https endpoints (hermes default true).
+	// +optional
+	SSLVerify *bool `json:"sslVerify,omitempty"`
+
+	// timeoutSeconds caps a single tool call (hermes default 120).
+	// +optional
+	TimeoutSeconds *int32 `json:"timeoutSeconds,omitempty"`
+	// connectTimeoutSeconds caps the initial connection (hermes default 60).
+	// +optional
+	ConnectTimeoutSeconds *int32 `json:"connectTimeoutSeconds,omitempty"`
+	// supportsParallelToolCalls allows concurrent tool execution (stdio).
+	// +optional
+	SupportsParallelToolCalls *bool `json:"supportsParallelToolCalls,omitempty"`
+	// tools filters the server's exposed tools (set include or exclude, not both).
+	// +optional
+	Tools *MCPToolFilter `json:"tools,omitempty"`
+
+	// secretEnv injects Secret-backed env vars onto the agent container so they
+	// can be referenced via ${name} in headers/env values (e.g. API tokens).
+	// +optional
+	// +listType=map
+	// +listMapKey=name
+	SecretEnv []MCPSecretEnv `json:"secretEnv,omitempty"`
+
+	// extraConfig is deep-merged into this server's config map for fields not
+	// modeled above (e.g. oauth, sampling). Typed fields win on conflict.
+	// +kubebuilder:pruning:PreserveUnknownFields
+	// +optional
+	ExtraConfig *runtime.RawExtension `json:"extraConfig,omitempty"`
+}
+
+// MCPToolFilter narrows an MCP server's exposed tools. Set include OR exclude.
+type MCPToolFilter struct {
+	// include enables only these tools (mutually exclusive with exclude).
+	// +optional
+	Include []string `json:"include,omitempty"`
+	// exclude disables these tools (mutually exclusive with include).
+	// +optional
+	Exclude []string `json:"exclude,omitempty"`
+}
+
+// MCPSecretEnv binds an agent-container env var to a Secret key, referenced via
+// ${name} in an MCP server's headers/env values.
+type MCPSecretEnv struct {
+	// name of the env var to expose on the agent container.
+	// +required
+	Name string `json:"name"`
+	// secretRef is the Secret name+key supplying the value.
+	// +required
+	SecretRef SecretKeyRef `json:"secretRef"`
 }

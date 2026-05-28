@@ -51,6 +51,35 @@ func TestProviderKeyInjection(t *testing.T) {
 	}
 }
 
+func TestMCPSecretEnvInjection(t *testing.T) {
+	a := baseAgent()
+	a.Spec.MCP.Servers = []hermesv1alpha1.MCPServerSpec{
+		{
+			Name: "remote",
+			URL:  "https://mcp.example.com/mcp",
+			SecretEnv: []hermesv1alpha1.MCPSecretEnv{
+				{Name: "REMOTE_TOKEN", SecretRef: hermesv1alpha1.SecretKeyRef{Name: "mcp-secrets", Key: "remote"}},
+			},
+		},
+		{Name: "local", Command: "npx"}, // no secretEnv -> nothing injected
+	}
+
+	// The env var is injected from the right Secret name+key.
+	var found *corev1.EnvVar
+	for _, e := range hermesEnv(a) {
+		if e.Name == "REMOTE_TOKEN" {
+			ee := e
+			found = &ee
+		}
+	}
+	if found == nil || found.ValueFrom == nil || found.ValueFrom.SecretKeyRef == nil {
+		t.Fatalf("REMOTE_TOKEN should be injected from a secretKeyRef, got %+v", found)
+	}
+	if ref := found.ValueFrom.SecretKeyRef; ref.Name != "mcp-secrets" || ref.Key != "remote" {
+		t.Errorf("REMOTE_TOKEN secretKeyRef = %s/%s, want mcp-secrets/remote", ref.Name, ref.Key)
+	}
+}
+
 func TestSearxngAndHonchoRenderEnv(t *testing.T) {
 	a := baseAgent()
 	a.Spec.Searxng.URL = "https://searxng.example/"

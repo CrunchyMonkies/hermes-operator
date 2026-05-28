@@ -87,6 +87,9 @@ func renderTyped(spec *hermesv1alpha1.HermesAgentSpec) map[string]any {
 		root["custom_providers"] = cps
 	}
 
+	// mcp_servers: (top-level) — keyed by server name.
+	putSection(root, "mcp_servers", renderMCPServers(spec.MCP.Servers))
+
 	// agent:
 	agent := map[string]any{}
 	putNonZeroInt(agent, "max_turns", int64(spec.Agent.MaxTurns))
@@ -261,6 +264,54 @@ func renderCustomProviders(in []hermesv1alpha1.ProviderSpec) []map[string]any {
 			entry["models"] = models
 		}
 		out = append(out, entry)
+	}
+	return out
+}
+
+// renderMCPServers builds config.yaml `mcp_servers` (a map keyed by server name)
+// from the typed list. Secret values are not emitted here — they ride in via
+// secretEnv (operator-injected env vars) and ${VAR} interpolation in hermes.
+func renderMCPServers(in []hermesv1alpha1.MCPServerSpec) map[string]any {
+	out := make(map[string]any, len(in))
+	for _, s := range in {
+		srv := map[string]any{}
+		putBoolPtr(srv, "enabled", s.Enabled)
+		putStr(srv, "transport", s.Transport)
+		putStr(srv, "command", s.Command)
+		if len(s.Args) > 0 {
+			srv["args"] = s.Args
+		}
+		if len(s.Env) > 0 {
+			srv["env"] = s.Env
+		}
+		putStr(srv, "url", s.URL)
+		if len(s.Headers) > 0 {
+			srv["headers"] = s.Headers
+		}
+		putBoolPtr(srv, "ssl_verify", s.SSLVerify)
+		putIntPtr(srv, "timeout", s.TimeoutSeconds)
+		putIntPtr(srv, "connect_timeout", s.ConnectTimeoutSeconds)
+		putBoolPtr(srv, "supports_parallel_tool_calls", s.SupportsParallelToolCalls)
+		if s.Tools != nil {
+			tf := map[string]any{}
+			if len(s.Tools.Include) > 0 {
+				tf["include"] = s.Tools.Include
+			}
+			if len(s.Tools.Exclude) > 0 {
+				tf["exclude"] = s.Tools.Exclude
+			}
+			if len(tf) > 0 {
+				srv["tools"] = tf
+			}
+		}
+		// extraConfig fills the long tail (oauth, sampling, …); typed keys win.
+		if s.ExtraConfig != nil && len(s.ExtraConfig.Raw) > 0 {
+			extra := map[string]any{}
+			if err := json.Unmarshal(s.ExtraConfig.Raw, &extra); err == nil {
+				srv = deepMerge(extra, srv)
+			}
+		}
+		out[s.Name] = srv
 	}
 	return out
 }

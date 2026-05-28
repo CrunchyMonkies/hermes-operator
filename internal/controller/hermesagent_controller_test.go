@@ -154,6 +154,47 @@ var _ = Describe("HermesAgent Controller", func() {
 			}
 			Expect(k8sClient.Create(ctx, a)).NotTo(Succeed())
 		})
+
+		It("rejects an mcp server with neither command nor url", func() {
+			a := &hermesv1alpha1.HermesAgent{
+				ObjectMeta: metav1.ObjectMeta{Name: "bad-mcp-none", Namespace: "default"},
+				Spec: hermesv1alpha1.HermesAgentSpec{
+					Image:   "img:v1",
+					Storage: hermesv1alpha1.StorageSpec{Size: &size},
+					MCP:     hermesv1alpha1.MCPSpec{Servers: []hermesv1alpha1.MCPServerSpec{{Name: "x"}}},
+				},
+			}
+			Expect(k8sClient.Create(ctx, a)).NotTo(Succeed())
+		})
+
+		It("rejects an mcp server with both command and url", func() {
+			a := &hermesv1alpha1.HermesAgent{
+				ObjectMeta: metav1.ObjectMeta{Name: "bad-mcp-both", Namespace: "default"},
+				Spec: hermesv1alpha1.HermesAgentSpec{
+					Image:   "img:v1",
+					Storage: hermesv1alpha1.StorageSpec{Size: &size},
+					MCP: hermesv1alpha1.MCPSpec{Servers: []hermesv1alpha1.MCPServerSpec{
+						{Name: "x", Command: "npx", URL: "https://mcp/x"},
+					}},
+				},
+			}
+			Expect(k8sClient.Create(ctx, a)).NotTo(Succeed())
+		})
+
+		It("accepts valid stdio and http mcp servers", func() {
+			a := &hermesv1alpha1.HermesAgent{
+				ObjectMeta: metav1.ObjectMeta{Name: "good-mcp", Namespace: "default"},
+				Spec: hermesv1alpha1.HermesAgentSpec{
+					Image:   "img:v1",
+					Storage: hermesv1alpha1.StorageSpec{Size: &size},
+					MCP: hermesv1alpha1.MCPSpec{Servers: []hermesv1alpha1.MCPServerSpec{
+						{Name: "local", Command: "npx", Args: []string{"-y", "srv"}},
+						{Name: "remote", Transport: "sse", URL: "https://mcp/x"},
+					}},
+				},
+			}
+			Expect(k8sClient.Create(ctx, a)).To(Succeed())
+		})
 	})
 
 	Context("When reconciling a missing resource", func() {

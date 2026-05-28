@@ -24,6 +24,8 @@ Highlights:
 - **Model providers** — typed `model.providers[]` for hermes built-ins
   (anthropic/openai/xai/openrouter/…, selected by name/alias) and custom
   OpenAI-compatible endpoints (with per-model context windows + key injection).
+- **MCP servers** — typed `mcp.servers[]` (stdio + http/sse) with per-server tool
+  filtering and Secret-backed credentials injected for `${VAR}` interpolation.
 - **Pre-install of optional deps** onto the PVC (pip SDKs for channels/backends,
   `honcho-ai`, Apptainer for singularity) so they survive restarts.
 - Declarative **skill activation** and **package installation** — pip (init
@@ -127,6 +129,34 @@ for a custom active provider the operator derives `model.base_url`/`api_mode` fr
 | `honcho.baseURL` | string | — | → `HONCHO_BASE_URL`. Honcho is "in use" when this or apiKeySecretRef is set. |
 | `honcho.apiKeySecretRef` | SecretKeyRef | — | → `HONCHO_API_KEY` (hosted Honcho). |
 | `honcho.installPackage` | *bool | `true` | Pre-install `honcho-ai` onto the PVC (via the pip-install init). |
+
+### `mcp` (→ `mcp_servers:`)
+
+`mcp.servers[]` declares Model Context Protocol servers, rendered to config.yaml
+`mcp_servers` keyed by `name`. A server is **stdio** (set `command`) or **http/sse**
+(set `url`) — exactly one. Credentials go in `secretEnv` (a Secret key injected as a
+container env var) and are referenced with `${ENVNAME}` inside `headers`/`env` values
+(hermes interpolates them at connect time; values pass through the operator untouched).
+
+**`mcp.servers[]` — MCPServerSpec**
+
+| Field | Type | Default | Notes |
+| --- | --- | --- | --- |
+| `name` | string | **required** | Keys the server in `mcp_servers` (unique). |
+| `enabled` | *bool | `true` | Toggle the server. |
+| `transport` | `stdio`\|`http`\|`sse` | — | `stdio` implied by `command`; `url` implies `http` unless set to `sse`. |
+| `command` | string | — | stdio: subprocess to launch. **Exactly one of `command`/`url`.** |
+| `args` | []string | — | stdio: command args. |
+| `env` | map[string]string | — | stdio: subprocess env; values may use `${VAR}`. |
+| `url` | string | — | http/sse: endpoint. **Exactly one of `command`/`url`.** |
+| `headers` | map[string]string | — | http/sse: request headers; values may use `${VAR}` (e.g. `Bearer ${TOK}`). |
+| `sslVerify` | *bool | `true` | http/sse: TLS verification. |
+| `timeoutSeconds` | *int32 | `120` | Per tool-call timeout. |
+| `connectTimeoutSeconds` | *int32 | `60` | Initial connection timeout. |
+| `supportsParallelToolCalls` | *bool | `false` | stdio: allow concurrent tool calls. |
+| `tools.include` / `tools.exclude` | []string | — | Filter exposed tools (set at most one). |
+| `secretEnv[]` | []{`name`,`secretRef`} | — | Inject a Secret key as env var `name`; reference via `${name}`. |
+| `extraConfig` | object | — | Deep-merged into this server (e.g. `oauth`, `sampling`); typed fields win. |
 
 ### `ingress` (shared, → Ingress objects)
 
@@ -241,6 +271,7 @@ channel-webhook ingresses unless they set their own.
 - `apiServer.ingress.enabled` requires `apiServer.enabled` and a host (`apiServer.ingress.host` or `spec.ingress.host`).
 - `channels[].ingress.enabled` requires a host (`channels[].ingress.host` or `spec.ingress.host`).
 - each `skills.custom[]` must set exactly one of `sourceRef` or `inline`.
+- each `mcp.servers[]` must set exactly one of `command` (stdio) or `url` (http/sse); `transport` must match; `tools` sets at most one of `include`/`exclude`.
 - `serviceAccount.name` is required when `serviceAccount.create=false`.
 - `kubeconfig.enabled` requires `serviceAccount.automountToken != false`.
 
@@ -348,6 +379,36 @@ spec:
     fallback_model: { provider: openrouter, model: anthropic/claude-sonnet-4 }
     auxiliary:
       compression: { provider: openrouter, model: google/gemini-3-flash }
+```
+
+### MCP servers (stdio + http with a secret token)
+
+```yaml
+spec:
+  mcp:
+    servers:
+      # stdio: launched as a subprocess; token interpolated into its env.
+      - name: github
+        command: npx
+        args: ["-y", "@modelcontextprotocol/server-github"]
+        env:
+          GITHUB_PERSONAL_ACCESS_TOKEN: ${GH_TOKEN}
+        secretEnv:
+          - name: GH_TOKEN
+            secretRef: { name: mcp-secrets, key: github-token }
+        tools:
+          include: [create_issue, get_issue]   # narrow the exposed tools
+      # http/sse: remote endpoint with a bearer token from a Secret.
+      - name: remote
+        transport: sse
+        url: https://mcp.example.com/sse
+        headers:
+          Authorization: Bearer ${REMOTE_TOKEN}
+        secretEnv:
+          - name: REMOTE_TOKEN
+            secretRef: { name: mcp-secrets, key: remote-token }
+        extraConfig:                            # long-tail knobs (oauth, sampling)
+          sampling: { enabled: true, max_rpm: 10 }
 ```
 
 A complete, production CR (custom endpoint + docker + kubeconfig + channels +
