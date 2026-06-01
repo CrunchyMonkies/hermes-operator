@@ -17,6 +17,8 @@ limitations under the License.
 package resources
 
 import (
+	"maps"
+
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
@@ -94,9 +96,7 @@ func Service(a *hermesv1alpha1.HermesAgent) *corev1.Service {
 func resolveServiceTypeAndAnnotations(a *hermesv1alpha1.HermesAgent) (corev1.ServiceType, map[string]string) {
 	annotations := map[string]string{}
 	merge := func(in map[string]string) {
-		for k, v := range in {
-			annotations[k] = v
-		}
+		maps.Copy(annotations, in)
 	}
 
 	// Collect enabled surface service blocks in priority order.

@@ -158,6 +158,10 @@ AGENT_IMG       ?= $(IMG_REGISTRY)/hermes-agent:$(VERSION)
 AGENT_IMG_PINNED?= $(IMG_REGISTRY)/hermes-agent:$(UPSTREAM_TAG)
 RELOADER_IMG    ?= $(IMG_REGISTRY)/hermes-reloader:$(VERSION)
 
+.PHONY: docker-build-operator
+docker-build-operator: ## Build only the operator (manager) image, honoring IMG. Used by e2e + local deploy.
+	$(CONTAINER_TOOL) build -f images/operator/Dockerfile -t $(IMG) .
+
 .PHONY: docker-build
 docker-build: ## Build all three component images locally (single-arch).
 	$(CONTAINER_TOOL) build -f images/operator/Dockerfile -t $(OPERATOR_IMG) .

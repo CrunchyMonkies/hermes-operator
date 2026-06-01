@@ -21,6 +21,7 @@ package config
 
 import (
 	"encoding/json"
+	"maps"
 	"sort"
 
 	"sigs.k8s.io/yaml"
@@ -410,9 +411,7 @@ func sortedCopy(in []string) []string {
 // merge recursively. Inputs are not mutated.
 func deepMerge(base, overlay map[string]any) map[string]any {
 	out := make(map[string]any, len(base)+len(overlay))
-	for k, v := range base {
-		out[k] = v
-	}
+	maps.Copy(out, base)
 	for k, ov := range overlay {
 		if bv, ok := out[k]; ok {
 			bm, bok := bv.(map[string]any)

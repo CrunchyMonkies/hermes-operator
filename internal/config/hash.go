@@ -20,6 +20,7 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"sort"
+	"strings"
 )
 
 // HashInputs are the materials that determine whether the pod must roll. A
@@ -62,7 +63,7 @@ func ConfigHash(in HashInputs) string {
 
 func writeBlock(h interface{ Write([]byte) (int, error) }, label string, data []byte) {
 	// Length-prefix each block so concatenation is unambiguous.
-	_, _ = h.Write([]byte(fmt.Sprintf("%s:%d:", label, len(data))))
+	_, _ = fmt.Fprintf(h, "%s:%d:", label, len(data))
 	_, _ = h.Write(data)
 	_, _ = h.Write([]byte("\n"))
 }
@@ -79,9 +80,10 @@ func sortedKeys(m map[string]string) []string {
 func joinSorted(in []string) string {
 	cp := append([]string(nil), in...)
 	sort.Strings(cp)
-	out := ""
+	var b strings.Builder
 	for _, s := range cp {
-		out += s + "\x00"
+		b.WriteString(s)
+		b.WriteByte(0)
 	}
-	return out
+	return b.String()
 }

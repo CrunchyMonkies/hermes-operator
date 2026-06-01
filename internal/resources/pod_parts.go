@@ -28,6 +28,14 @@ import (
 	hermesv1alpha1 "github.com/matthew/hermes-operator/api/v1alpha1"
 )
 
+const (
+	// socketTransportTCP is the docker.socketTransport value selecting the TCP
+	// daemon endpoint (vs the default shared unix socket).
+	socketTransportTCP = "tcp"
+	// backendSingularity is the terminalBackend value for the Apptainer backend.
+	backendSingularity = "singularity"
+)
+
 // sharedVolumeMounts are the three shared-PVC subPath mounts plus /dev/shm that
 // the operator always asserts on the hermes (and dind) container (§4.1).
 func sharedVolumeMounts() []corev1.VolumeMount {
@@ -46,14 +54,15 @@ func baseVolumes(a *hermesv1alpha1.HermesAgent) []corev1.Volume {
 		size := *a.Spec.ShmSize
 		shm.SizeLimit = &size
 	}
-	vols := []corev1.Volume{
-		{
+	vols := make([]corev1.Volume, 0, 3+len(a.Spec.Skills.Custom))
+	vols = append(vols,
+		corev1.Volume{
 			Name: VolShared,
 			VolumeSource: corev1.VolumeSource{
 				PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: PVCName(a)},
 			},
 		},
-		{
+		corev1.Volume{
 			Name: VolConfig,
 			VolumeSource: corev1.VolumeSource{
 				ConfigMap: &corev1.ConfigMapVolumeSource{
@@ -61,8 +70,8 @@ func baseVolumes(a *hermesv1alpha1.HermesAgent) []corev1.Volume {
 				},
 			},
 		},
-		{Name: VolShm, VolumeSource: corev1.VolumeSource{EmptyDir: &shm}},
-	}
+		corev1.Volume{Name: VolShm, VolumeSource: corev1.VolumeSource{EmptyDir: &shm}},
+	)
 	vols = append(vols, skillSourceVolumes(a)...)
 	return vols
 }
@@ -73,7 +82,7 @@ func skillVolumeName(skill string) string { return "skill-" + skill }
 // skillSourceVolumes mounts each custom skill's source (inline ConfigMap, or a
 // referenced ConfigMap/Secret) so the reloader can copy it onto the PVC.
 func skillSourceVolumes(a *hermesv1alpha1.HermesAgent) []corev1.Volume {
-	var out []corev1.Volume
+	out := make([]corev1.Volume, 0, len(a.Spec.Skills.Custom))
 	for _, s := range a.Spec.Skills.Custom {
 		vol := corev1.Volume{Name: skillVolumeName(s.Name)}
 		switch {
@@ -103,7 +112,7 @@ func skillSourceVolumes(a *hermesv1alpha1.HermesAgent) []corev1.Volume {
 
 // skillSourceMounts mounts the skill source volumes into the reloader container.
 func skillSourceMounts(a *hermesv1alpha1.HermesAgent) []corev1.VolumeMount {
-	var out []corev1.VolumeMount
+	out := make([]corev1.VolumeMount, 0, len(a.Spec.Skills.Custom))
 	for _, s := range a.Spec.Skills.Custom {
 		out = append(out, corev1.VolumeMount{
 			Name:      skillVolumeName(s.Name),
@@ -393,7 +402,7 @@ func dindImage(a *hermesv1alpha1.HermesAgent) string {
 // dindSocketVolume is the emptyDir carrying the daemon's unix socket, shared
 // between the agent and dind containers. Returns nil for the tcp transport.
 func dindSocketVolume(a *hermesv1alpha1.HermesAgent) *corev1.Volume {
-	if a.Spec.Runtime.Docker.SocketTransport == "tcp" {
+	if a.Spec.Runtime.Docker.SocketTransport == socketTransportTCP {
 		return nil
 	}
 	return &corev1.Volume{
@@ -404,7 +413,7 @@ func dindSocketVolume(a *hermesv1alpha1.HermesAgent) *corev1.Volume {
 
 // dindSocketMount mounts the shared socket emptyDir (unix transport only).
 func dindSocketMount(a *hermesv1alpha1.HermesAgent) *corev1.VolumeMount {
-	if a.Spec.Runtime.Docker.SocketTransport == "tcp" {
+	if a.Spec.Runtime.Docker.SocketTransport == socketTransportTCP {
 		return nil
 	}
 	return &corev1.VolumeMount{Name: VolDindSocket, MountPath: DindSocketDir}
@@ -434,7 +443,7 @@ func dindContainer(a *hermesv1alpha1.HermesAgent) corev1.Container {
 	// group) so a NON-root agent — and the tool sandboxes that bind-mount it — can
 	// reach the daemon. Without this the socket is root:docker(0660) and a
 	// runAsRoot:false agent gets "permission denied". (tcp transport has no socket.)
-	if a.Spec.Runtime.Docker.SocketTransport != "tcp" {
+	if a.Spec.Runtime.Docker.SocketTransport != socketTransportTCP {
 		args = append(args, "--group="+strconv.FormatInt(a.Spec.HermesGID, 10))
 	}
 
@@ -541,7 +550,7 @@ pip install --no-cache-dir --target "$TARGET" %s
 // singularityInstallEnabled reports whether the operator should install Apptainer
 // (terminalBackend=singularity and runtime.installDeps not disabled).
 func singularityInstallEnabled(a *hermesv1alpha1.HermesAgent) bool {
-	return a.Spec.Runtime.TerminalBackend == "singularity" &&
+	return a.Spec.Runtime.TerminalBackend == backendSingularity &&
 		(a.Spec.Runtime.InstallDeps == nil || *a.Spec.Runtime.InstallDeps)
 }
 

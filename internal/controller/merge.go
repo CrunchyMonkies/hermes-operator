@@ -18,6 +18,7 @@ package controller
 
 import (
 	"encoding/json"
+	"maps"
 
 	hermesv1alpha1 "github.com/matthew/hermes-operator/api/v1alpha1"
 )
@@ -63,9 +64,7 @@ func fromMap(m map[string]any, out any) error {
 // merge recursively. Slices are replaced wholesale (overlay wins).
 func deepMergeAny(base, overlay map[string]any) map[string]any {
 	out := make(map[string]any, len(base)+len(overlay))
-	for k, v := range base {
-		out[k] = v
-	}
+	maps.Copy(out, base)
 	for k, ov := range overlay {
 		if bv, ok := out[k]; ok {
 			bm, bok := bv.(map[string]any)

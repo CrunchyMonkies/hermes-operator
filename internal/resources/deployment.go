@@ -19,6 +19,7 @@ package resources
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"strconv"
 	"strings"
 
@@ -55,7 +56,7 @@ func Deployment(a *hermesv1alpha1.HermesAgent, configHash, reloaderImage string)
 	}
 
 	// Re-assert invariants the operator always wins on (after the overlay).
-	reassertInvariants(a, &final, configHash, reloaderImage)
+	reassertInvariants(a, &final, configHash)
 
 	replicas := int32(1)
 	if a.Spec.Replicas != nil {
@@ -149,7 +150,7 @@ func basePodTemplate(a *hermesv1alpha1.HermesAgent, configHash, reloaderImage st
 }
 
 func reloaderEnv(a *hermesv1alpha1.HermesAgent) []corev1.EnvVar {
-	var skillNames []string
+	skillNames := make([]string, 0, len(a.Spec.Skills.Custom))
 	for _, s := range a.Spec.Skills.Custom {
 		skillNames = append(skillNames, s.Name)
 	}
@@ -226,7 +227,7 @@ func applyPodTemplateOverlay(base corev1.PodTemplateSpec, overlay *corev1.PodTem
 // reassertInvariants re-applies the operator-owned guarantees after the overlay
 // (§3.6): shared-PVC volume + its subPath mounts on the hermes container, the
 // config-hash annotation, root-start, and the typed resources/probes.
-func reassertInvariants(a *hermesv1alpha1.HermesAgent, pod *corev1.PodTemplateSpec, configHash, reloaderImage string) {
+func reassertInvariants(a *hermesv1alpha1.HermesAgent, pod *corev1.PodTemplateSpec, configHash string) {
 	// config-hash annotation.
 	if pod.Annotations == nil {
 		pod.Annotations = map[string]string{}
@@ -237,9 +238,7 @@ func reassertInvariants(a *hermesv1alpha1.HermesAgent, pod *corev1.PodTemplateSp
 	if pod.Labels == nil {
 		pod.Labels = map[string]string{}
 	}
-	for k, v := range Labels(a) {
-		pod.Labels[k] = v
-	}
+	maps.Copy(pod.Labels, Labels(a))
 
 	// Shared PVC + config + shm volumes (upsert by name; the operator owns these).
 	for _, v := range baseVolumes(a) {

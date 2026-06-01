@@ -17,6 +17,8 @@ limitations under the License.
 package resources
 
 import (
+	"maps"
+
 	hermesv1alpha1 "github.com/matthew/hermes-operator/api/v1alpha1"
 )
 
@@ -91,12 +93,8 @@ func mergedIngress(shared, surface hermesv1alpha1.IngressSpec) hermesv1alpha1.In
 	}
 	if len(shared.Annotations) > 0 || len(surface.Annotations) > 0 {
 		merged := make(map[string]string, len(shared.Annotations)+len(surface.Annotations))
-		for k, v := range shared.Annotations {
-			merged[k] = v
-		}
-		for k, v := range surface.Annotations {
-			merged[k] = v
-		}
+		maps.Copy(merged, shared.Annotations)
+		maps.Copy(merged, surface.Annotations)
 		out.Annotations = merged
 	}
 	return out

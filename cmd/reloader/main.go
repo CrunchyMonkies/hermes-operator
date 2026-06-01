@@ -258,7 +258,7 @@ func envOr(key, def string) string {
 
 func splitNonEmpty(s, sep string) []string {
 	var out []string
-	for _, p := range strings.Split(s, sep) {
+	for p := range strings.SplitSeq(s, sep) {
 		if p = strings.TrimSpace(p); p != "" {
 			out = append(out, p)
 		}

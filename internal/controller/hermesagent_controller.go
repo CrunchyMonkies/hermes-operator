@@ -197,6 +197,10 @@ func (r *HermesAgentReconciler) apply(ctx context.Context, owner *hermesv1alpha1
 	}
 	obj.GetObjectKind().SetGroupVersionKind(gvk)
 	obj.SetManagedFields(nil)
+	// client.Apply (the SSA patch type) remains the only way to server-side
+	// apply an arbitrary client.Object; the newer Client.Apply() requires a typed
+	// runtime.ApplyConfiguration, which the operator's generic children do not have.
+	//nolint:staticcheck // SA1019: see above — no typed-ApplyConfiguration path for generic objects.
 	return r.Patch(ctx, obj, client.Apply, fieldOwner, client.ForceOwnership)
 }
 
