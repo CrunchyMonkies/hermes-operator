@@ -80,6 +80,51 @@ func TestMCPSecretEnvInjection(t *testing.T) {
 	}
 }
 
+func bitwardenAgent() *hermesv1alpha1.HermesAgent {
+	a := baseAgent()
+	a.Spec.Secrets.Bitwarden = &hermesv1alpha1.BitwardenSpec{
+		Enabled:              ptrBool(true),
+		AccessTokenSecretRef: &hermesv1alpha1.SecretKeyRef{Name: "bw-creds", Key: "token"},
+	}
+	return a
+}
+
+func TestBitwardenAccessTokenInjection(t *testing.T) {
+	a := bitwardenAgent()
+
+	var found *corev1.EnvVar
+	for _, e := range hermesEnv(a) {
+		if e.Name == "BWS_ACCESS_TOKEN" {
+			ee := e
+			found = &ee
+		}
+	}
+	if found == nil || found.ValueFrom == nil || found.ValueFrom.SecretKeyRef == nil {
+		t.Fatalf("BWS_ACCESS_TOKEN should be injected from a secretKeyRef, got %+v", found)
+	}
+	if ref := found.ValueFrom.SecretKeyRef; ref.Name != "bw-creds" || ref.Key != "token" {
+		t.Errorf("BWS_ACCESS_TOKEN secretKeyRef = %s/%s, want bw-creds/token", ref.Name, ref.Key)
+	}
+}
+
+func TestBitwardenAccessTokenCustomEnv(t *testing.T) {
+	a := bitwardenAgent()
+	a.Spec.Secrets.Bitwarden.AccessTokenEnv = "BW_TOKEN"
+
+	if _, fromSecret, ok := envByName(a, "BW_TOKEN"); !ok || !fromSecret {
+		t.Errorf("custom BW_TOKEN should be injected from a secretKeyRef (ok=%v fromSecret=%v)", ok, fromSecret)
+	}
+	if _, _, ok := envByName(a, "BWS_ACCESS_TOKEN"); ok {
+		t.Errorf("default BWS_ACCESS_TOKEN must not be injected when accessTokenEnv overrides it")
+	}
+}
+
+func TestBitwardenNoInjectionWhenAbsent(t *testing.T) {
+	if _, _, ok := envByName(baseAgent(), "BWS_ACCESS_TOKEN"); ok {
+		t.Errorf("BWS_ACCESS_TOKEN must not be injected when bitwarden is unset")
+	}
+}
+
 func TestSearxngAndHonchoRenderEnv(t *testing.T) {
 	a := baseAgent()
 	a.Spec.Searxng.URL = "https://searxng.example/"

@@ -26,6 +26,8 @@ Highlights:
   OpenAI-compatible endpoints (with per-model context windows + key injection).
 - **MCP servers** — typed `mcp.servers[]` (stdio + http/sse) with per-server tool
   filtering and Secret-backed credentials injected for `${VAR}` interpolation.
+- **Bitwarden secrets** — `secrets.bitwarden` syncs secrets via the `bws` machine
+  account, with a Secret-backed access token and a custom/self-hosted `serverURL`.
 - **Pre-install of optional deps** onto the PVC (pip SDKs for channels/backends,
   `honcho-ai`, Apptainer for singularity) so they survive restarts.
 - Declarative **skill activation** and **package installation** — pip (init
@@ -158,6 +160,29 @@ container env var) and are referenced with `${ENVNAME}` inside `headers`/`env` v
 | `secretEnv[]` | []{`name`,`secretRef`} | — | Inject a Secret key as env var `name`; reference via `${name}`. |
 | `extraConfig` | object | — | Deep-merged into this server (e.g. `oauth`, `sampling`); typed fields win. |
 
+### `secrets` (→ `secrets:`)
+
+`secrets.bitwarden` wires the agent to [Bitwarden Secrets Manager](https://hermes-agent.nousresearch.com/docs/user-guide/secrets/bitwarden)
+(machine account + the `bws` CLI), rendered to config.yaml `secrets.bitwarden`. The
+machine-account access token is sensitive, so it is **not** rendered into config —
+`accessTokenSecretRef` is injected as the env var named by `accessTokenEnv` (default
+`BWS_ACCESS_TOKEN`) and hermes reads it at runtime. `serverURL` points `bws` at a
+custom region or self-hosted instance (e.g. `https://vault.bitwarden.eu`, or a
+Vaultwarden URL); leave it empty for the US cloud.
+
+**`secrets.bitwarden` — BitwardenSpec**
+
+| Field | Type | Default | Notes |
+| --- | --- | --- | --- |
+| `enabled` | *bool | `false` | Master switch for Bitwarden sync. When `true`, `accessTokenSecretRef` is required. |
+| `accessTokenSecretRef` | SecretKeyRef | — | Machine-account token; injected as env var `accessTokenEnv`. |
+| `accessTokenEnv` | string | `BWS_ACCESS_TOKEN` | Name of the env var holding the access token. |
+| `projectID` | string | — | Bitwarden project UUID to sync from. |
+| `serverURL` | string | — | Custom/self-hosted endpoint (→ `server_url`). Empty = US cloud. |
+| `cacheTTLSeconds` | *int32 | `300` | In-process cache TTL for fetched secrets. |
+| `overrideExisting` | *bool | `true` | Let Bitwarden values replace existing env vars (never the token var itself). |
+| `autoInstall` | *bool | `true` | Let the agent download the `bws` binary on demand (needs egress). |
+
 ### `ingress` (shared, → Ingress objects)
 
 Top-level `spec.ingress` is the shared Ingress config. When enabled (and
@@ -272,6 +297,7 @@ channel-webhook ingresses unless they set their own.
 - `channels[].ingress.enabled` requires a host (`channels[].ingress.host` or `spec.ingress.host`).
 - each `skills.custom[]` must set exactly one of `sourceRef` or `inline`.
 - each `mcp.servers[]` must set exactly one of `command` (stdio) or `url` (http/sse); `transport` must match; `tools` sets at most one of `include`/`exclude`.
+- `secrets.bitwarden.enabled` requires `accessTokenSecretRef`.
 - `serviceAccount.name` is required when `serviceAccount.create=false`.
 - `kubeconfig.enabled` requires `serviceAccount.automountToken != false`.
 
@@ -409,6 +435,19 @@ spec:
             secretRef: { name: mcp-secrets, key: remote-token }
         extraConfig:                            # long-tail knobs (oauth, sampling)
           sampling: { enabled: true, max_rpm: 10 }
+```
+
+### Bitwarden secrets (self-hosted server)
+
+```yaml
+spec:
+  secrets:
+    bitwarden:
+      enabled: true
+      serverURL: https://vault.example.com   # custom region / self-hosted / Vaultwarden
+      projectID: 11111111-2222-3333-4444-555555555555
+      # The token rides in as env BWS_ACCESS_TOKEN (never written to config.yaml).
+      accessTokenSecretRef: { name: bw-creds, key: token }
 ```
 
 A complete, production CR (custom endpoint + docker + kubeconfig + channels +

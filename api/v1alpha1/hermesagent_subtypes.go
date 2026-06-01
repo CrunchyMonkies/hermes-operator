@@ -526,3 +526,44 @@ type MCPSecretEnv struct {
 	// +required
 	SecretRef SecretKeyRef `json:"secretRef"`
 }
+
+// SecretsSpec groups external secret-manager integrations. Renders to config.yaml `secrets:`.
+type SecretsSpec struct {
+	// bitwarden syncs secrets from Bitwarden Secrets Manager (config.yaml `secrets.bitwarden`).
+	// +optional
+	Bitwarden *BitwardenSpec `json:"bitwarden,omitempty"`
+}
+
+// BitwardenSpec configures Bitwarden Secrets Manager sync via the bws machine
+// account. Renders to config.yaml `secrets.bitwarden`; the access token value is
+// never rendered — it rides in via the operator-injected env var named by
+// accessTokenEnv, which hermes reads at runtime.
+type BitwardenSpec struct {
+	// enabled turns on Bitwarden secret sync (hermes default false).
+	// +optional
+	Enabled *bool `json:"enabled,omitempty"`
+	// accessTokenSecretRef supplies the machine-account access token, injected as the
+	// env var named by accessTokenEnv. Required when enabled.
+	// +optional
+	AccessTokenSecretRef *SecretKeyRef `json:"accessTokenSecretRef,omitempty"`
+	// accessTokenEnv names the env var holding the access token (hermes default BWS_ACCESS_TOKEN).
+	// +optional
+	AccessTokenEnv string `json:"accessTokenEnv,omitempty"`
+	// projectID is the Bitwarden project UUID to sync from.
+	// +optional
+	ProjectID string `json:"projectID,omitempty"`
+	// serverURL points bws at a custom region or self-hosted instance
+	// (e.g. https://vault.bitwarden.eu, or a self-hosted/Vaultwarden URL). Empty = US cloud.
+	// +optional
+	ServerURL string `json:"serverURL,omitempty"`
+	// cacheTTLSeconds caps how long fetched secrets are cached in-process (hermes default 300).
+	// +optional
+	CacheTTLSeconds *int32 `json:"cacheTTLSeconds,omitempty"`
+	// overrideExisting lets Bitwarden values replace existing env vars (hermes default true).
+	// (The access token var is never overwritten by hermes.)
+	// +optional
+	OverrideExisting *bool `json:"overrideExisting,omitempty"`
+	// autoInstall lets the agent download the bws binary on demand (hermes default true).
+	// +optional
+	AutoInstall *bool `json:"autoInstall,omitempty"`
+}

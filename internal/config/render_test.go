@@ -498,6 +498,68 @@ func TestRenderMCPServersOmittedWhenEmpty(t *testing.T) {
 	}
 }
 
+func TestRenderBitwarden(t *testing.T) {
+	spec := &hermesv1alpha1.HermesAgentSpec{
+		Secrets: hermesv1alpha1.SecretsSpec{
+			Bitwarden: &hermesv1alpha1.BitwardenSpec{
+				Enabled:          ptrBool(true),
+				AccessTokenEnv:   "BWS_ACCESS_TOKEN",
+				ProjectID:        "11111111-2222-3333-4444-555555555555",
+				ServerURL:        "https://vault.example.com",
+				CacheTTLSeconds:  ptrI32(600),
+				OverrideExisting: ptrBool(false),
+				AutoInstall:      ptrBool(true),
+				// The token value must never reach config.yaml.
+				AccessTokenSecretRef: &hermesv1alpha1.SecretKeyRef{Name: "bw-creds", Key: "token"},
+			},
+		},
+	}
+
+	got := mustParse(t, mustRender(t, spec))
+	secrets, ok := got["secrets"].(map[string]any)
+	if !ok {
+		t.Fatalf("secrets = %v", got["secrets"])
+	}
+	bw, ok := secrets["bitwarden"].(map[string]any)
+	if !ok {
+		t.Fatalf("secrets.bitwarden = %v", secrets["bitwarden"])
+	}
+	if bw["enabled"] != true {
+		t.Errorf("bitwarden.enabled = %v", bw["enabled"])
+	}
+	if bw["access_token_env"] != "BWS_ACCESS_TOKEN" {
+		t.Errorf("bitwarden.access_token_env = %v", bw["access_token_env"])
+	}
+	if bw["project_id"] != "11111111-2222-3333-4444-555555555555" {
+		t.Errorf("bitwarden.project_id = %v", bw["project_id"])
+	}
+	if bw["server_url"] != "https://vault.example.com" {
+		t.Errorf("bitwarden.server_url = %v (custom/self-hosted endpoint)", bw["server_url"])
+	}
+	if v, _ := bw["cache_ttl_seconds"].(float64); int(v) != 600 {
+		t.Errorf("bitwarden.cache_ttl_seconds = %v", bw["cache_ttl_seconds"])
+	}
+	if bw["override_existing"] != false {
+		t.Errorf("bitwarden.override_existing = %v", bw["override_existing"])
+	}
+	if bw["auto_install"] != true {
+		t.Errorf("bitwarden.auto_install = %v", bw["auto_install"])
+	}
+	// The token itself (name/key/value) must not be rendered into config.yaml.
+	for _, k := range []string{"access_token", "accessTokenSecretRef", "token", "secret"} {
+		if _, ok := bw[k]; ok {
+			t.Errorf("bitwarden must not render credential key %q: %v", k, bw[k])
+		}
+	}
+}
+
+func TestRenderSecretsOmittedWhenEmpty(t *testing.T) {
+	got := mustParse(t, mustRender(t, &hermesv1alpha1.HermesAgentSpec{}))
+	if _, ok := got["secrets"]; ok {
+		t.Errorf("secrets should be omitted when unset, got %v", got["secrets"])
+	}
+}
+
 func TestConfigHashStableAndSensitive(t *testing.T) {
 	base := HashInputs{
 		ConfigYAML:     []byte("a: 1\n"),

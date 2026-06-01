@@ -90,6 +90,9 @@ func renderTyped(spec *hermesv1alpha1.HermesAgentSpec) map[string]any {
 	// mcp_servers: (top-level) — keyed by server name.
 	putSection(root, "mcp_servers", renderMCPServers(spec.MCP.Servers))
 
+	// secrets: (top-level) — external secret managers (e.g. bitwarden).
+	putSection(root, "secrets", renderSecrets(spec.Secrets))
+
 	// agent:
 	agent := map[string]any{}
 	putNonZeroInt(agent, "max_turns", int64(spec.Agent.MaxTurns))
@@ -314,6 +317,34 @@ func renderMCPServers(in []hermesv1alpha1.MCPServerSpec) map[string]any {
 		out[s.Name] = srv
 	}
 	return out
+}
+
+// renderSecrets builds config.yaml `secrets` from the typed spec. Only secret-
+// manager wiring is emitted here — credential values never are.
+func renderSecrets(in hermesv1alpha1.SecretsSpec) map[string]any {
+	out := map[string]any{}
+	if bw := renderBitwarden(in.Bitwarden); len(bw) > 0 {
+		out["bitwarden"] = bw
+	}
+	return out
+}
+
+// renderBitwarden builds config.yaml `secrets.bitwarden`. The access token value
+// is never emitted — only access_token_env (the var name) is; the value rides in
+// as the operator-injected env var hermes reads at runtime.
+func renderBitwarden(in *hermesv1alpha1.BitwardenSpec) map[string]any {
+	if in == nil {
+		return nil
+	}
+	bw := map[string]any{}
+	putBoolPtr(bw, "enabled", in.Enabled)
+	putStr(bw, "access_token_env", in.AccessTokenEnv)
+	putStr(bw, "project_id", in.ProjectID)
+	putStr(bw, "server_url", in.ServerURL)
+	putIntPtr(bw, "cache_ttl_seconds", in.CacheTTLSeconds)
+	putBoolPtr(bw, "override_existing", in.OverrideExisting)
+	putBoolPtr(bw, "auto_install", in.AutoInstall)
+	return bw
 }
 
 // RenderSoul returns the SOUL.md content (empty spec.soul yields no file).

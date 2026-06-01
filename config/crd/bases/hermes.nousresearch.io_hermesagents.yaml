@@ -9830,6 +9830,61 @@ spec:
                       env.
                     type: string
                 type: object
+              secrets:
+                description: secrets wires external secret managers (config.yaml `secrets`).
+                properties:
+                  bitwarden:
+                    description: bitwarden syncs secrets from Bitwarden Secrets Manager
+                      (config.yaml `secrets.bitwarden`).
+                    properties:
+                      accessTokenEnv:
+                        description: accessTokenEnv names the env var holding the
+                          access token (hermes default BWS_ACCESS_TOKEN).
+                        type: string
+                      accessTokenSecretRef:
+                        description: |-
+                          accessTokenSecretRef supplies the machine-account access token, injected as the
+                          env var named by accessTokenEnv. Required when enabled.
+                        properties:
+                          key:
+                            description: key within the Secret holding the value.
+                            type: string
+                          name:
+                            description: name of the Secret.
+                            type: string
+                        required:
+                        - key
+                        - name
+                        type: object
+                      autoInstall:
+                        description: autoInstall lets the agent download the bws binary
+                          on demand (hermes default true).
+                        type: boolean
+                      cacheTTLSeconds:
+                        description: cacheTTLSeconds caps how long fetched secrets
+                          are cached in-process (hermes default 300).
+                        format: int32
+                        type: integer
+                      enabled:
+                        description: enabled turns on Bitwarden secret sync (hermes
+                          default false).
+                        type: boolean
+                      overrideExisting:
+                        description: |-
+                          overrideExisting lets Bitwarden values replace existing env vars (hermes default true).
+                          (The access token var is never overwritten by hermes.)
+                        type: boolean
+                      projectID:
+                        description: projectID is the Bitwarden project UUID to sync
+                          from.
+                        type: string
+                      serverURL:
+                        description: |-
+                          serverURL points bws at a custom region or self-hosted instance
+                          (e.g. https://vault.bitwarden.eu, or a self-hosted/Vaultwarden URL). Empty = US cloud.
+                        type: string
+                    type: object
+                type: object
               serviceAccount:
                 description: ServiceAccountSpec configures the SA the agent pod +
                   reloader run as.
@@ -10010,6 +10065,9 @@ spec:
               rule: '!has(self.mcp) || !has(self.mcp.servers) || self.mcp.servers.all(s,
                 !has(s.tools) || !((has(s.tools.include) && size(s.tools.include)
                 != 0) && (has(s.tools.exclude) && size(s.tools.exclude) != 0)))'
+            - message: secrets.bitwarden.enabled requires accessTokenSecretRef
+              rule: '!has(self.secrets) || !has(self.secrets.bitwarden) || !has(self.secrets.bitwarden.enabled)
+                || !self.secrets.bitwarden.enabled || has(self.secrets.bitwarden.accessTokenSecretRef)'
           status:
             description: HermesAgentStatus defines the observed state of HermesAgent.
             properties:

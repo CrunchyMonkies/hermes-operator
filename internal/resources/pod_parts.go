@@ -254,6 +254,24 @@ func hermesEnv(a *hermesv1alpha1.HermesAgent) []corev1.EnvVar {
 		}
 	}
 
+	// Bitwarden: inject the machine-account access token under its configured env
+	// var (default BWS_ACCESS_TOKEN) so hermes' bws sync can authenticate.
+	if bw := a.Spec.Secrets.Bitwarden; bw != nil && bw.AccessTokenSecretRef != nil {
+		name := bw.AccessTokenEnv
+		if name == "" {
+			name = "BWS_ACCESS_TOKEN"
+		}
+		env = append(env, corev1.EnvVar{
+			Name: name,
+			ValueFrom: &corev1.EnvVarSource{
+				SecretKeyRef: &corev1.SecretKeySelector{
+					LocalObjectReference: corev1.LocalObjectReference{Name: bw.AccessTokenSecretRef.Name},
+					Key:                  bw.AccessTokenSecretRef.Key,
+				},
+			},
+		})
+	}
+
 	// Point Python at the pip-installed packages on the shared PVC (the pip-install
 	// init container writes them to the dotlocal user-site).
 	if pipInstallEnabled(a) {
