@@ -5,7 +5,7 @@ A Kubernetes operator (Go) for deploying and managing
 gateways declaratively via a `HermesAgent` Custom Resource.
 
 > Full design: [`docs/specification.md`](docs/specification.md). Pinned upstream:
-> Hermes Agent `v2026.5.16` (vendored at `third_party/hermes-agent`).
+> Hermes Agent `v2026.5.29.2` (vendored at `third_party/hermes-agent`).
 
 ## What it does
 
@@ -45,7 +45,7 @@ Highlights:
 | Component | Image | Build |
 | --- | --- | --- |
 | Operator | `hermes-operator` | `images/operator/Dockerfile` (distroless) |
-| Agent | `hermes-agent` | `images/agent/Dockerfile` (upstream + Homebrew + skill + wrapper entrypoint) |
+| Agent | `hermes-agent` | `images/agent/Dockerfile` (upstream + Homebrew + skill + s6 cont-init apt hook) |
 | Reloader | `hermes-reloader` | `images/reloader/Dockerfile` (`FROM` agent + Go binary) |
 
 ---
@@ -74,7 +74,7 @@ Config-rendered fields note their `config.yaml` target as `→ key`.
 | `resources` | corev1.ResourceRequirements | — | Agent container resources. |
 | `shmSize` | Quantity | — | `/dev/shm` emptyDir size (browser tools). |
 | `hermesUID` / `hermesGID` / `fsGroup` | int64 | `10000` | Run-as ids / fsGroup. |
-| `runAsRoot` | bool | `true` | Start as root so the entrypoint can `usermod`/`gosu` then drop to hermes. |
+| `runAsRoot` | bool | `true` | Governs the operator's init containers. The main agent container always starts as root: the image's s6-overlay `/init` requires root for cont-init bootstrap, then drops the hermes process to `hermesUID` via `s6-setuidgid`. |
 | `podTemplate` | corev1.PodTemplateSpec | — | Strategic-merge overlay; operator invariants re-asserted after. |
 
 ### `model` (→ `model:`)
@@ -251,9 +251,9 @@ channel-webhook ingresses unless they set their own.
 
 | Field | Type | Default | Notes |
 | --- | --- | --- | --- |
-| `runtime.terminalBackend` | `local`\|`docker`\|`ssh`\|`modal`\|`daytona`\|`vercel_sandbox`\|`singularity` | `local` | → `terminal.backend` |
+| `runtime.terminalBackend` | `local`\|`docker`\|`ssh`\|`modal`\|`daytona`\|`singularity` | `local` | → `terminal.backend` |
 | `runtime.terminalTimeout` | int32 | — | → `terminal.timeout` |
-| `runtime.installDeps` | *bool | `true` | Pre-install the backend's deps (modal/daytona/vercel SDKs, or Apptainer). |
+| `runtime.installDeps` | *bool | `true` | Pre-install the backend's deps (modal/daytona SDKs, or Apptainer). |
 | `runtime.codeExecution.timeout` / `.maxToolCalls` | int32 | — | → `code_execution.*` |
 | `runtime.delegation.maxIterations` / `.maxConcurrentChildren` | int32 | — | → `delegation.*` |
 | `runtime.docker.image` | string | `docker:27-dind` | DinD sidecar image. |
@@ -314,7 +314,7 @@ metadata:
   name: claude-bot
   namespace: agents
 spec:
-  image: harbor.bne1.ouchi.com.au/applications/hermes-agent:v2026.5.16
+  image: harbor.bne1.ouchi.com.au/applications/hermes-agent:v2026.5.29.2
   imagePullSecrets: [{ name: harbor-pull }]
   storage: { size: 20Gi, storageClassName: fast-ssd }
   model:
@@ -467,7 +467,7 @@ cmd/operator, cmd/reloader/   # the two binaries
 images/{operator,agent,reloader}/
 config/                       # kustomize (crd, rbac, manager, samples)
 charts/hermes-operator/       # Helm chart (CRDs + RBAC + manager)
-third_party/hermes-agent/     # upstream submodule @ v2026.5.16
+third_party/hermes-agent/     # upstream submodule @ v2026.5.29.2
 ```
 
 ## Develop

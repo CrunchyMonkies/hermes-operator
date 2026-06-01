@@ -6,7 +6,7 @@
 
 Status: **Draft** · Target: greenfield (`hermes-operator`) · Owner: matthew
 
-**Pinned upstream:** Hermes Agent `v2026.5.16` (release v0.14.0, commit `a91a57fa5`),
+**Pinned upstream:** Hermes Agent `v2026.5.29.2` (release v0.15.2, commit `77a1650c7`),
 vendored at `third_party/hermes-agent` as a git submodule. All concrete claims
 below (env vars, ports, file paths, config keys) are verified against that tag's
 source — primarily `Dockerfile`, `docker/entrypoint.sh`, `cli-config.yaml.example`,
@@ -27,13 +27,13 @@ OpenAI-compatible HTTP API and a separate web dashboard.
 | --- | --- | --- |
 | Image | `nousresearch/hermes-agent` / `ghcr.io/nousresearch/hermes-agent` | docker-compose.yml |
 | Base | `debian:13.4`, Python 3.13 via `uv`; build tools (`gcc`, `build-essential`) present | Dockerfile |
-| ENTRYPOINT | `tini -g -- /opt/hermes/docker/entrypoint.sh` | Dockerfile |
+| ENTRYPOINT | `/init /opt/hermes/docker/main-wrapper.sh` (s6-overlay; `/init` = PID 1) | Dockerfile |
 | Gateway command | `["gateway", "run"]` | docker-compose.yml |
 | `HERMES_HOME` (data) | `/opt/data` (VOLUME) | Dockerfile `ENV HERMES_HOME=/opt/data` |
 | **hermes `$HOME`** | **`/opt/data`** (`useradd -m -d /opt/data`) ⇒ `~/.local` = `/opt/data/.local` | Dockerfile |
 | **PATH** | already includes **`/opt/data/.local/bin`** | Dockerfile `ENV PATH=` |
 | Runtime user | non-root `hermes`, **UID/GID default 10000** | Dockerfile |
-| Privilege model | **starts as root**, entrypoint `usermod`/`groupmod` then `gosu hermes` | entrypoint.sh |
+| Privilege model | **starts as root**, s6-overlay `/init` cont-init does `usermod`/`groupmod` then drops via `s6-setuidgid hermes` | s6-overlay (`/init`, `main-wrapper.sh`) |
 | API server port | **8642** (`DEFAULT_PORT`), bind `127.0.0.1` (`DEFAULT_HOST`) | api_server.py:57-58 |
 | API server state | **OFF by default**; `API_SERVER_ENABLED` / `API_SERVER_KEY` enables | config.py:1472 |
 | Health endpoint | `/health` + `/health/detailed` — **only on the API server** | api_server.py:3363 |
@@ -150,7 +150,7 @@ kind: HermesAgent
 metadata:
   name: research-bot
 spec:
-  image: harbor.bne1.ouchi.com.au/applications/hermes-agent:v2026.5.16
+  image: harbor.bne1.ouchi.com.au/applications/hermes-agent:v2026.5.29.2
   imagePullPolicy: IfNotPresent
   imagePullSecrets: [{ name: harbor-pull }]
 
@@ -257,7 +257,7 @@ spec:
 
   # ---- Agent runtime: tool/code execution backend (see 11) ----
   runtime:
-    terminalBackend: local            # local|docker|ssh|modal|daytona|vercel_sandbox|singularity
+    terminalBackend: local            # local|docker|ssh|modal|daytona|singularity
     terminalTimeout: 180              # -> terminal.timeout
     codeExecution:
       timeout: 300                    # -> code_execution.timeout
@@ -717,13 +717,13 @@ Three components, each with its own Dockerfile, built and **pushed to
 | Component | Image | Contents |
 | --- | --- | --- |
 | **Operator** | `harbor.bne1.ouchi.com.au/applications/hermes-operator` | Go controller-manager (distroless/static). |
-| **Agent** | `harbor.bne1.ouchi.com.au/applications/hermes-agent` | `FROM nousresearch/hermes-agent:v2026.5.16` + Homebrew dist at `/opt/homebrew-dist` + HOMEBREW_* env + extended entrypoint (brew init, apt apply) + embedded `package-management` skill. |
+| **Agent** | `harbor.bne1.ouchi.com.au/applications/hermes-agent` | `FROM nousresearch/hermes-agent:v2026.5.29.2` + Homebrew dist at `/opt/homebrew-dist` + HOMEBREW_* env + an s6-overlay cont-init hook (`00-hermes-apt`) for root apt install (inherits upstream's `/init` ENTRYPOINT) + embedded `package-management` skill. |
 | **Reloader** | `harbor.bne1.ouchi.com.au/applications/hermes-reloader` | Small Go (or Python) binary; runs as in-pod sidecar (§8). May reuse the agent image to get `hermes`/`brew` on PATH, or a slim image that execs into the agent container. |
 
 ### 9.1 Build & push
 - `make docker-build docker-push IMG_REGISTRY=harbor.bne1.ouchi.com.au/applications`
   builds/pushes all three with a shared version tag (default = operator release;
-  agent also tagged with the upstream `v2026.5.16` it derives from).
+  agent also tagged with the upstream `v2026.5.29.2` it derives from).
 - Multi-arch via `docker buildx` (`linux/amd64`, `linux/arm64`).
 - Requires Harbor credentials (`docker login harbor.bne1.ouchi.com.au`); CI uses
   a robot account. Image pull in-cluster uses `imagePullSecrets` (`harbor-pull`).
@@ -745,7 +745,7 @@ hermes-operator/
 ├── charts/
 │   ├── hermes-operator/          # installs the operator (CRDs + RBAC + manager)
 │   └── hermes-agent/             # renders a HermesAgent CR (+ Secret) for app teams
-├── third_party/hermes-agent/     # submodule @ v2026.5.16
+├── third_party/hermes-agent/     # submodule @ v2026.5.29.2
 ├── Makefile · docs/{brief,specification}.md
 ```
 
@@ -795,7 +795,7 @@ deploy agents without writing raw CRs.
 ```yaml
 # values.yaml (agent chart) — keys map 1:1 to HermesAgent.spec
 fullnameOverride: ""
-image: harbor.bne1.ouchi.com.au/applications/hermes-agent:v2026.5.16
+image: harbor.bne1.ouchi.com.au/applications/hermes-agent:v2026.5.29.2
 model: { default: anthropic/claude-opus-4.6, provider: auto }
 storage: { size: 20Gi, storageClassName: "", reclaimPolicy: Retain }
 apiServer:
@@ -874,7 +874,7 @@ sub-status); no secret-mutation. Mounts the shared PVC.
 ## 11. Code execution & tool sandboxing
 
 Hermes is an **agent that runs code and shell tools**; `terminal.backend` selects
-*where* those run (`local|docker|ssh|modal|daytona|vercel_sandbox|singularity`,
+*where* those run (`local|docker|ssh|modal|daytona|singularity`,
 default `local`), and `code_execution.*` bounds them (`timeout`,
 `max_tool_calls`). This is the reason brew/apt/`~/.local` matter (§5) — tools
 execute in the agent container.
@@ -924,7 +924,7 @@ Docker/CRI socket.
 **Posture:** standard DinD is privileged and **breaks `restricted` PSS** (§11.3);
 the validator warns and the namespace must allow privileged (or use `rootless`).
 For stronger isolation without privilege, prefer a **remote** backend
-(`modal`/`daytona`/`vercel_sandbox`) via `extraConfig` + Secret — execution moves
+(`modal`/`daytona`) via `extraConfig` + Secret — execution moves
 off-cluster entirely. The dind sidecar is **operator-managed** and re-asserted
 after any `podTemplate` overlay (§3.6).
 
@@ -1022,7 +1022,7 @@ schema — upstream tracks **`_config_version`** (23 at the pinned tag) and ship
 
 ### 14.3 Operator ↔ agent skew
 The operator pins a **tested upstream tag** as the default `spec.image` (the
-`third_party/hermes-agent` submodule, currently `v2026.5.16`) and runs
+`third_party/hermes-agent` submodule, currently `v2026.5.29.2`) and runs
 config-rendering tests against that exact `cli-config.yaml.example`. Users may
 override `spec.image` to a different tag; the validator warns when the image tag
 differs from the operator's tested baseline (skew is allowed but flagged), and
@@ -1065,7 +1065,7 @@ the submodule-bump checklist at the top of this doc.
 | --- | --- |
 | **v1alpha1 (MVP)** | `HermesAgent`; single shared PVC (subPath mounts incl. `~/.local`, settable size); Deployment(Recreate)+ConfigMap+Service+Ingress; `podTemplate` overlay; serviceAccount; secret refs; config render; **skill activation (defaults + custom + package-management)**; **apt(boot)+brew(PVC) packages**; `local` code-exec backend (§11); **finalizer + graceful shutdown** (§13); **config-migrate on image bump** (§14.1); exec/http probes; reloader sidecar; per-component Dockerfiles → Harbor; **`hermes-operator` Helm chart** (9.3a). |
 | **v1beta1** | `HermesConfigPreset`+`HermesChannel`; admission + **conversion webhook** (§14.2); declarative **cron jobs** (§12); **`docker` backend via injected DinD sidecar** (§11.2); in-place hot reload via reloader; metrics/`ServiceMonitor`; log sidecar; NetworkPolicy; **`hermes-agent` Helm chart** (9.3b). |
-| **v1** | Backup/restore (VolumeSnapshot, quiesced single-writer); multi-profile; rootless-DinD hardening + remote terminal backends (`modal`/`daytona`/`vercel_sandbox`) (§11.2). |
+| **v1** | Backup/restore (VolumeSnapshot, quiesced single-writer); multi-profile; rootless-DinD hardening + remote terminal backends (`modal`/`daytona`) (§11.2). |
 
 ---
 
