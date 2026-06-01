@@ -149,7 +149,7 @@ in-docker: build-image ## Run a make target in the toolchain image, e.g. make in
 IMG_REGISTRY    ?= harbor.bne1.ouchi.com.au/applications
 RELEASE_VERSION ?= $(shell sed -nE 's/^appVersion:[[:space:]]*"?([^"]+)"?.*/\1/p' charts/hermes-operator/Chart.yaml)
 VERSION         ?= v$(RELEASE_VERSION)
-UPSTREAM_TAG    ?= v2026.5.16
+UPSTREAM_TAG    ?= v2026.5.29.2
 UPSTREAM_IMAGE  ?= nousresearch/hermes-agent:$(UPSTREAM_TAG)
 PLATFORMS       ?= linux/amd64,linux/arm64
 

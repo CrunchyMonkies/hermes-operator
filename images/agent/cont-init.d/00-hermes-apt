@@ -1,0 +1,31 @@
+#!/command/with-contenv sh
+# Derived-image s6-overlay cont-init hook: install declared apt packages.
+#
+# Upstream (v2026.5.29.2) replaced the single `tini + entrypoint.sh` startup
+# with an s6-overlay supervision tree — /init (PID 1) runs /etc/cont-init.d/*
+# as root during stage 2, then starts the supervised services and finally
+# exec's main-wrapper.sh (which drops to the hermes user). cont-init.d is the
+# correct hook point for a root-only step: it runs before any user service and
+# does NOT have to re-implement the upstream bootstrap (stage2-hook.sh still
+# does UID remap, chown, config seed, skills sync).
+#
+# `with-contenv` repopulates the env from /run/s6/container_environment so
+# HERMES_APT_PACKAGES (set by the operator) is visible here.
+#
+# apt packages are system-level and live OUTSIDE the data volume, so they are
+# re-applied on every pod start (spec §5.3). Homebrew prefix init + `brew
+# install` happen in the reloader sidecar as the hermes user (spec §5.1, §8).
+set -e
+
+if [ "$(id -u)" = "0" ] && [ -n "$HERMES_APT_PACKAGES" ]; then
+    echo "[cont-init 00-hermes-apt] Installing apt packages: $HERMES_APT_PACKAGES"
+    apt-get update
+    # shellcheck disable=SC2086
+    apt-get install -y --no-install-recommends $HERMES_APT_PACKAGES
+    rm -rf /var/lib/apt/lists/*
+elif [ -n "$HERMES_APT_PACKAGES" ]; then
+    echo "[cont-init 00-hermes-apt] WARNING: HERMES_APT_PACKAGES is set but the" \
+         "container is not running as root; skipping apt install. Start the agent" \
+         "container as root (the s6 /init drops to the hermes user via" \
+         "s6-setuidgid) to enable apt packages." >&2
+fi

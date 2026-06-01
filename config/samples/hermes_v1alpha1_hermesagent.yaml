@@ -5,7 +5,7 @@ metadata:
   labels:
     app.kubernetes.io/name: hermes-operator
 spec:
-  image: harbor.bne1.ouchi.com.au/applications/hermes-agent:v2026.5.16
+  image: harbor.bne1.ouchi.com.au/applications/hermes-agent:v2026.5.29.2
   imagePullPolicy: IfNotPresent
   imagePullSecrets:
     - name: harbor-pull
