@@ -5,8 +5,8 @@ description: |
   gateways via the HermesAgent CRD. Installs the CRDs, RBAC, and the
   controller-manager.
 type: application
-version: 2026.5.16
-appVersion: "2026.5.16"
+version: 2026.5.29+2
+appVersion: "2026.5.29.2"
 home: https://github.com/matthew/hermes-operator
 sources:
   - https://github.com/matthew/hermes-operator

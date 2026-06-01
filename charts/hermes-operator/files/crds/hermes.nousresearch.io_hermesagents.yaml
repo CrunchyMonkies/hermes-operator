@@ -917,7 +917,7 @@ spec:
                   apiMode:
                     description: |-
                       apiMode selects the wire protocol/transport for the endpoint. Optional: same
-                      inheritance as baseURL. Known values at tag v2026.5.16: chat_completions,
+                      inheritance as baseURL. Known values at tag v2026.5.29.2: chat_completions,
                       anthropic_messages, codex_responses, bedrock_converse (re-verify on tag bump).
                       -> model.api_mode
                     type: string
@@ -9662,8 +9662,12 @@ spec:
               runAsRoot:
                 default: true
                 description: |-
-                  runAsRoot starts the container as root so the entrypoint can usermod/gosu
-                  before dropping to the hermes user.
+                  runAsRoot governs the operator's own init containers (config seeding, pip
+                  install, apptainer install): true starts them as root, false as the hermes
+                  user. The MAIN agent container always starts as root regardless — the
+                  upstream image boots via s6-overlay (/init = PID 1), which requires root
+                  for its cont-init bootstrap and then drops the hermes process to hermesUID
+                  via s6-setuidgid.
                 type: boolean
               runtime:
                 description: RuntimeSpec selects the tool/code execution backend.
@@ -9785,8 +9789,8 @@ spec:
                     default: true
                     description: |-
                       installDeps, when true (default), pre-installs the terminal backend's deps
-                      onto the shared PVC at startup — the pip SDKs for modal/daytona/vercel_sandbox,
-                      or Apptainer for singularity (none are bundled). Set false to rely on hermes'
+                      onto the shared PVC at startup — the pip SDKs for modal/daytona, or
+                      Apptainer for singularity (none are bundled). Set false to rely on hermes'
                       runtime lazy-install instead.
                     type: boolean
                   singularity:
@@ -9814,7 +9818,6 @@ spec:
                     - ssh
                     - modal
                     - daytona
-                    - vercel_sandbox
                     - singularity
                     type: string
                   terminalTimeout:
@@ -9831,6 +9834,61 @@ spec:
                     description: url is the SearXNG base URL; renders to the SEARXNG_URL
                       env.
                     type: string
+                type: object
+              secrets:
+                description: secrets wires external secret managers (config.yaml `secrets`).
+                properties:
+                  bitwarden:
+                    description: bitwarden syncs secrets from Bitwarden Secrets Manager
+                      (config.yaml `secrets.bitwarden`).
+                    properties:
+                      accessTokenEnv:
+                        description: accessTokenEnv names the env var holding the
+                          access token (hermes default BWS_ACCESS_TOKEN).
+                        type: string
+                      accessTokenSecretRef:
+                        description: |-
+                          accessTokenSecretRef supplies the machine-account access token, injected as the
+                          env var named by accessTokenEnv. Required when enabled.
+                        properties:
+                          key:
+                            description: key within the Secret holding the value.
+                            type: string
+                          name:
+                            description: name of the Secret.
+                            type: string
+                        required:
+                        - key
+                        - name
+                        type: object
+                      autoInstall:
+                        description: autoInstall lets the agent download the bws binary
+                          on demand (hermes default true).
+                        type: boolean
+                      cacheTTLSeconds:
+                        description: cacheTTLSeconds caps how long fetched secrets
+                          are cached in-process (hermes default 300).
+                        format: int32
+                        type: integer
+                      enabled:
+                        description: enabled turns on Bitwarden secret sync (hermes
+                          default false).
+                        type: boolean
+                      overrideExisting:
+                        description: |-
+                          overrideExisting lets Bitwarden values replace existing env vars (hermes default true).
+                          (The access token var is never overwritten by hermes.)
+                        type: boolean
+                      projectID:
+                        description: projectID is the Bitwarden project UUID to sync
+                          from.
+                        type: string
+                      serverURL:
+                        description: |-
+                          serverURL points bws at a custom region or self-hosted instance
+                          (e.g. https://vault.bitwarden.eu, or a self-hosted/Vaultwarden URL). Empty = US cloud.
+                        type: string
+                    type: object
                 type: object
               serviceAccount:
                 description: ServiceAccountSpec configures the SA the agent pod +
@@ -10012,6 +10070,9 @@ spec:
               rule: '!has(self.mcp) || !has(self.mcp.servers) || self.mcp.servers.all(s,
                 !has(s.tools) || !((has(s.tools.include) && size(s.tools.include)
                 != 0) && (has(s.tools.exclude) && size(s.tools.exclude) != 0)))'
+            - message: secrets.bitwarden.enabled requires accessTokenSecretRef
+              rule: '!has(self.secrets) || !has(self.secrets.bitwarden) || !has(self.secrets.bitwarden.enabled)
+                || !self.secrets.bitwarden.enabled || has(self.secrets.bitwarden.accessTokenSecretRef)'
           status:
             description: HermesAgentStatus defines the observed state of HermesAgent.
             properties:

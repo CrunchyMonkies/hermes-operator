@@ -39,6 +39,7 @@ import (
 // +kubebuilder:validation:XValidation:rule="!has(self.mcp) || !has(self.mcp.servers) || self.mcp.servers.all(s, (has(s.command) && size(s.command) != 0) != (has(s.url) && size(s.url) != 0))",message="each mcp.servers entry must set exactly one of command (stdio) or url (http/sse)"
 // +kubebuilder:validation:XValidation:rule="!has(self.mcp) || !has(self.mcp.servers) || self.mcp.servers.all(s, !has(s.transport) || (s.transport == 'stdio' ? (has(s.command) && size(s.command) != 0) : (has(s.url) && size(s.url) != 0)))",message="mcp.servers transport=stdio requires command; transport=http/sse requires url"
 // +kubebuilder:validation:XValidation:rule="!has(self.mcp) || !has(self.mcp.servers) || self.mcp.servers.all(s, !has(s.tools) || !((has(s.tools.include) && size(s.tools.include) != 0) && (has(s.tools.exclude) && size(s.tools.exclude) != 0)))",message="mcp.servers tools must set at most one of include or exclude"
+// +kubebuilder:validation:XValidation:rule="!has(self.secrets) || !has(self.secrets.bitwarden) || !has(self.secrets.bitwarden.enabled) || !self.secrets.bitwarden.enabled || has(self.secrets.bitwarden.accessTokenSecretRef)",message="secrets.bitwarden.enabled requires accessTokenSecretRef"
 type HermesAgentSpec struct {
 	// image is the agent container image (the operator's derived image with brew).
 	// +required
@@ -77,6 +78,10 @@ type HermesAgentSpec struct {
 	// mcp configures Model Context Protocol servers (config.yaml `mcp_servers`).
 	// +optional
 	MCP MCPSpec `json:"mcp,omitempty"`
+
+	// secrets wires external secret managers (config.yaml `secrets`).
+	// +optional
+	Secrets SecretsSpec `json:"secrets,omitempty"`
 
 	// ingress is the agent's single, shared Ingress configuration. Its host,
 	// className, annotations, tls, and pathType are the defaults for every HTTP
@@ -154,8 +159,12 @@ type HermesAgentSpec struct {
 	// +kubebuilder:default=10000
 	// +optional
 	HermesGID int64 `json:"hermesGID,omitempty"`
-	// runAsRoot starts the container as root so the entrypoint can usermod/gosu
-	// before dropping to the hermes user.
+	// runAsRoot governs the operator's own init containers (config seeding, pip
+	// install, apptainer install): true starts them as root, false as the hermes
+	// user. The MAIN agent container always starts as root regardless — the
+	// upstream image boots via s6-overlay (/init = PID 1), which requires root
+	// for its cont-init bootstrap and then drops the hermes process to hermesUID
+	// via s6-setuidgid.
 	// +kubebuilder:default=true
 	// +optional
 	RunAsRoot bool `json:"runAsRoot,omitempty"`

@@ -195,6 +195,36 @@ var _ = Describe("HermesAgent Controller", func() {
 			}
 			Expect(k8sClient.Create(ctx, a)).To(Succeed())
 		})
+
+		It("rejects enabled bitwarden without accessTokenSecretRef", func() {
+			a := &hermesv1alpha1.HermesAgent{
+				ObjectMeta: metav1.ObjectMeta{Name: "bad-bitwarden", Namespace: "default"},
+				Spec: hermesv1alpha1.HermesAgentSpec{
+					Image:   "img:v1",
+					Storage: hermesv1alpha1.StorageSpec{Size: &size},
+					Secrets: hermesv1alpha1.SecretsSpec{Bitwarden: &hermesv1alpha1.BitwardenSpec{
+						Enabled: ptr.To(true),
+					}},
+				},
+			}
+			Expect(k8sClient.Create(ctx, a)).NotTo(Succeed())
+		})
+
+		It("accepts enabled bitwarden with a custom server and token ref", func() {
+			a := &hermesv1alpha1.HermesAgent{
+				ObjectMeta: metav1.ObjectMeta{Name: "good-bitwarden", Namespace: "default"},
+				Spec: hermesv1alpha1.HermesAgentSpec{
+					Image:   "img:v1",
+					Storage: hermesv1alpha1.StorageSpec{Size: &size},
+					Secrets: hermesv1alpha1.SecretsSpec{Bitwarden: &hermesv1alpha1.BitwardenSpec{
+						Enabled:              ptr.To(true),
+						ServerURL:            "https://vault.example.com",
+						AccessTokenSecretRef: &hermesv1alpha1.SecretKeyRef{Name: "bw-creds", Key: "token"},
+					}},
+				},
+			}
+			Expect(k8sClient.Create(ctx, a)).To(Succeed())
+		})
 	})
 
 	Context("When reconciling a missing resource", func() {

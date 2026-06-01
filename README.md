@@ -5,7 +5,7 @@ A Kubernetes operator (Go) for deploying and managing
 gateways declaratively via a `HermesAgent` Custom Resource.
 
 > Full design: [`docs/specification.md`](docs/specification.md). Pinned upstream:
-> Hermes Agent `v2026.5.16` (vendored at `third_party/hermes-agent`).
+> Hermes Agent `v2026.5.29.2` (vendored at `third_party/hermes-agent`).
 
 ## What it does
 
@@ -26,6 +26,8 @@ Highlights:
   OpenAI-compatible endpoints (with per-model context windows + key injection).
 - **MCP servers** — typed `mcp.servers[]` (stdio + http/sse) with per-server tool
   filtering and Secret-backed credentials injected for `${VAR}` interpolation.
+- **Bitwarden secrets** — `secrets.bitwarden` syncs secrets via the `bws` machine
+  account, with a Secret-backed access token and a custom/self-hosted `serverURL`.
 - **Pre-install of optional deps** onto the PVC (pip SDKs for channels/backends,
   `honcho-ai`, Apptainer for singularity) so they survive restarts.
 - Declarative **skill activation** and **package installation** — pip (init
@@ -43,7 +45,7 @@ Highlights:
 | Component | Image | Build |
 | --- | --- | --- |
 | Operator | `hermes-operator` | `images/operator/Dockerfile` (distroless) |
-| Agent | `hermes-agent` | `images/agent/Dockerfile` (upstream + Homebrew + skill + wrapper entrypoint) |
+| Agent | `hermes-agent` | `images/agent/Dockerfile` (upstream + Homebrew + skill + s6 cont-init apt hook) |
 | Reloader | `hermes-reloader` | `images/reloader/Dockerfile` (`FROM` agent + Go binary) |
 
 ---
@@ -72,7 +74,7 @@ Config-rendered fields note their `config.yaml` target as `→ key`.
 | `resources` | corev1.ResourceRequirements | — | Agent container resources. |
 | `shmSize` | Quantity | — | `/dev/shm` emptyDir size (browser tools). |
 | `hermesUID` / `hermesGID` / `fsGroup` | int64 | `10000` | Run-as ids / fsGroup. |
-| `runAsRoot` | bool | `true` | Start as root so the entrypoint can `usermod`/`gosu` then drop to hermes. |
+| `runAsRoot` | bool | `true` | Governs the operator's init containers. The main agent container always starts as root: the image's s6-overlay `/init` requires root for cont-init bootstrap, then drops the hermes process to `hermesUID` via `s6-setuidgid`. |
 | `podTemplate` | corev1.PodTemplateSpec | — | Strategic-merge overlay; operator invariants re-asserted after. |
 
 ### `model` (→ `model:`)
@@ -158,6 +160,29 @@ container env var) and are referenced with `${ENVNAME}` inside `headers`/`env` v
 | `secretEnv[]` | []{`name`,`secretRef`} | — | Inject a Secret key as env var `name`; reference via `${name}`. |
 | `extraConfig` | object | — | Deep-merged into this server (e.g. `oauth`, `sampling`); typed fields win. |
 
+### `secrets` (→ `secrets:`)
+
+`secrets.bitwarden` wires the agent to [Bitwarden Secrets Manager](https://hermes-agent.nousresearch.com/docs/user-guide/secrets/bitwarden)
+(machine account + the `bws` CLI), rendered to config.yaml `secrets.bitwarden`. The
+machine-account access token is sensitive, so it is **not** rendered into config —
+`accessTokenSecretRef` is injected as the env var named by `accessTokenEnv` (default
+`BWS_ACCESS_TOKEN`) and hermes reads it at runtime. `serverURL` points `bws` at a
+custom region or self-hosted instance (e.g. `https://vault.bitwarden.eu`, or a
+Vaultwarden URL); leave it empty for the US cloud.
+
+**`secrets.bitwarden` — BitwardenSpec**
+
+| Field | Type | Default | Notes |
+| --- | --- | --- | --- |
+| `enabled` | *bool | `false` | Master switch for Bitwarden sync. When `true`, `accessTokenSecretRef` is required. |
+| `accessTokenSecretRef` | SecretKeyRef | — | Machine-account token; injected as env var `accessTokenEnv`. |
+| `accessTokenEnv` | string | `BWS_ACCESS_TOKEN` | Name of the env var holding the access token. |
+| `projectID` | string | — | Bitwarden project UUID to sync from. |
+| `serverURL` | string | — | Custom/self-hosted endpoint (→ `server_url`). Empty = US cloud. |
+| `cacheTTLSeconds` | *int32 | `300` | In-process cache TTL for fetched secrets. |
+| `overrideExisting` | *bool | `true` | Let Bitwarden values replace existing env vars (never the token var itself). |
+| `autoInstall` | *bool | `true` | Let the agent download the `bws` binary on demand (needs egress). |
+
 ### `ingress` (shared, → Ingress objects)
 
 Top-level `spec.ingress` is the shared Ingress config. When enabled (and
@@ -226,9 +251,9 @@ channel-webhook ingresses unless they set their own.
 
 | Field | Type | Default | Notes |
 | --- | --- | --- | --- |
-| `runtime.terminalBackend` | `local`\|`docker`\|`ssh`\|`modal`\|`daytona`\|`vercel_sandbox`\|`singularity` | `local` | → `terminal.backend` |
+| `runtime.terminalBackend` | `local`\|`docker`\|`ssh`\|`modal`\|`daytona`\|`singularity` | `local` | → `terminal.backend` |
 | `runtime.terminalTimeout` | int32 | — | → `terminal.timeout` |
-| `runtime.installDeps` | *bool | `true` | Pre-install the backend's deps (modal/daytona/vercel SDKs, or Apptainer). |
+| `runtime.installDeps` | *bool | `true` | Pre-install the backend's deps (modal/daytona SDKs, or Apptainer). |
 | `runtime.codeExecution.timeout` / `.maxToolCalls` | int32 | — | → `code_execution.*` |
 | `runtime.delegation.maxIterations` / `.maxConcurrentChildren` | int32 | — | → `delegation.*` |
 | `runtime.docker.image` | string | `docker:27-dind` | DinD sidecar image. |
@@ -272,6 +297,7 @@ channel-webhook ingresses unless they set their own.
 - `channels[].ingress.enabled` requires a host (`channels[].ingress.host` or `spec.ingress.host`).
 - each `skills.custom[]` must set exactly one of `sourceRef` or `inline`.
 - each `mcp.servers[]` must set exactly one of `command` (stdio) or `url` (http/sse); `transport` must match; `tools` sets at most one of `include`/`exclude`.
+- `secrets.bitwarden.enabled` requires `accessTokenSecretRef`.
 - `serviceAccount.name` is required when `serviceAccount.create=false`.
 - `kubeconfig.enabled` requires `serviceAccount.automountToken != false`.
 
@@ -288,7 +314,7 @@ metadata:
   name: claude-bot
   namespace: agents
 spec:
-  image: harbor.bne1.ouchi.com.au/applications/hermes-agent:v2026.5.16
+  image: harbor.bne1.ouchi.com.au/applications/hermes-agent:v2026.5.29.2
   imagePullSecrets: [{ name: harbor-pull }]
   storage: { size: 20Gi, storageClassName: fast-ssd }
   model:
@@ -411,6 +437,19 @@ spec:
           sampling: { enabled: true, max_rpm: 10 }
 ```
 
+### Bitwarden secrets (self-hosted server)
+
+```yaml
+spec:
+  secrets:
+    bitwarden:
+      enabled: true
+      serverURL: https://vault.example.com   # custom region / self-hosted / Vaultwarden
+      projectID: 11111111-2222-3333-4444-555555555555
+      # The token rides in as env BWS_ACCESS_TOKEN (never written to config.yaml).
+      accessTokenSecretRef: { name: bw-creds, key: token }
+```
+
 A complete, production CR (custom endpoint + docker + kubeconfig + channels +
 searxng + honcho + dashboard ingress) lives at
 `k8s-cluster/ouchi/bne1-cluster1/hermes/lana-hermesagent.yaml`.
@@ -428,7 +467,7 @@ cmd/operator, cmd/reloader/   # the two binaries
 images/{operator,agent,reloader}/
 config/                       # kustomize (crd, rbac, manager, samples)
 charts/hermes-operator/       # Helm chart (CRDs + RBAC + manager)
-third_party/hermes-agent/     # upstream submodule @ v2026.5.16
+third_party/hermes-agent/     # upstream submodule @ v2026.5.29.2
 ```
 
 ## Develop

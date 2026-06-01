@@ -117,6 +117,30 @@ build: manifests generate fmt vet ## Build operator and reloader binaries.
 run: manifests generate fmt vet ## Run a controller from your host.
 	go run ./cmd/operator
 
+##@ Containerized build (no host Go required)
+
+# Toolchain image + a mounted-repo runner, so codegen/tests work without a host Go.
+# Generated files (deepcopy, CRD YAMLs) are written back to the working tree.
+BUILD_IMG       ?= hermes-operator-build
+# Run as the host user with host-owned cache dirs so the container never leaves
+# root-owned files in the working tree (bin/, generated files all stay writable).
+BUILD_CACHE_DIR ?= $(HOME)/.cache/hermes-operator-build
+DOCKER_RUN      ?= $(CONTAINER_TOOL) run --rm \
+                   -u $(shell id -u):$(shell id -g) -e HOME=/tmp \
+                   -v "$(CURDIR)":/workspace -w /workspace \
+                   -v "$(BUILD_CACHE_DIR)/cache":/tmp/.cache \
+                   -v "$(BUILD_CACHE_DIR)/go-pkg":/go/pkg \
+                   $(BUILD_IMG)
+
+.PHONY: build-image
+build-image: ## Build the local toolchain image (images/build/Dockerfile).
+	$(CONTAINER_TOOL) build -f images/build/Dockerfile -t $(BUILD_IMG) .
+
+.PHONY: in-docker
+in-docker: build-image ## Run a make target in the toolchain image, e.g. make in-docker TARGET="generate manifests".
+	@mkdir -p "$(BUILD_CACHE_DIR)/cache" "$(BUILD_CACHE_DIR)/go-pkg"
+	$(DOCKER_RUN) make $(TARGET)
+
 ##@ Images (Harbor)
 
 # Registry and tags for the three published components (spec §9).
@@ -125,7 +149,7 @@ run: manifests generate fmt vet ## Run a controller from your host.
 IMG_REGISTRY    ?= harbor.bne1.ouchi.com.au/applications
 RELEASE_VERSION ?= $(shell sed -nE 's/^appVersion:[[:space:]]*"?([^"]+)"?.*/\1/p' charts/hermes-operator/Chart.yaml)
 VERSION         ?= v$(RELEASE_VERSION)
-UPSTREAM_TAG    ?= v2026.5.16
+UPSTREAM_TAG    ?= v2026.5.29.2
 UPSTREAM_IMAGE  ?= nousresearch/hermes-agent:$(UPSTREAM_TAG)
 PLATFORMS       ?= linux/amd64,linux/arm64
 

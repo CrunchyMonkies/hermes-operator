@@ -17,7 +17,7 @@ limitations under the License.
 package resources
 
 // Feature pip dependencies, mirroring third_party/hermes-agent/tools/lazy_deps.py
-// at the pinned hermes tag (v2026.5.16). hermes lazy-installs these at first use
+// at the pinned hermes tag (v2026.5.29.2). hermes lazy-installs these at first use
 // into the image's ephemeral .venv; the operator instead pre-installs them onto
 // the shared PVC (the pip-install init container, importable via PYTHONPATH) so
 // they persist across restarts and need no runtime network/lazy-install.
@@ -35,10 +35,10 @@ var (
 
 	// backendPipDeps maps a remote terminal backend (runtime.terminalBackend) to
 	// its SDK. local/docker are bundled; ssh/singularity need system binaries (not
-	// pip) and are not handled here.
+	// pip) and are not handled here. (vercel_sandbox was removed upstream at
+	// v2026.5.29.2 — terminal.vercel no longer exists in lazy_deps.py.)
 	backendPipDeps = map[string][]string{
-		"modal":          {"modal==1.3.4"},
-		"daytona":        {"daytona==0.155.0"},
-		"vercel_sandbox": {"vercel==0.5.7"},
+		"modal":   {"modal==1.3.4"},
+		"daytona": {"daytona==0.155.0"},
 	}
 )

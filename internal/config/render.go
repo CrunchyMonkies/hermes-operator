@@ -16,7 +16,7 @@ limitations under the License.
 
 // Package config renders a HermesAgent spec into the on-disk config.yaml the
 // Hermes gateway consumes, plus the SOUL.md persona file. Keys mirror the
-// verified upstream cli-config.yaml.example (tag v2026.5.16). See spec §3.4.
+// verified upstream cli-config.yaml.example (tag v2026.5.29.2). See spec §3.4.
 package config
 
 import (
@@ -28,8 +28,9 @@ import (
 	hermesv1alpha1 "github.com/matthew/hermes-operator/api/v1alpha1"
 )
 
-// ConfigVersion is the upstream _config_version at the pinned tag (v2026.5.16).
-const ConfigVersion = 23
+// ConfigVersion is the upstream _config_version at the pinned tag (v2026.5.29.2).
+// The 23→24 bump is purely additive (new optional keys); no structural migration.
+const ConfigVersion = 24
 
 // RenderConfigYAML builds config.yaml from the typed spec, applies extraConfig
 // per precedence, and marshals to YAML. `${VAR}` strings pass through untouched
@@ -89,6 +90,9 @@ func renderTyped(spec *hermesv1alpha1.HermesAgentSpec) map[string]any {
 
 	// mcp_servers: (top-level) — keyed by server name.
 	putSection(root, "mcp_servers", renderMCPServers(spec.MCP.Servers))
+
+	// secrets: (top-level) — external secret managers (e.g. bitwarden).
+	putSection(root, "secrets", renderSecrets(spec.Secrets))
 
 	// agent:
 	agent := map[string]any{}
@@ -314,6 +318,34 @@ func renderMCPServers(in []hermesv1alpha1.MCPServerSpec) map[string]any {
 		out[s.Name] = srv
 	}
 	return out
+}
+
+// renderSecrets builds config.yaml `secrets` from the typed spec. Only secret-
+// manager wiring is emitted here — credential values never are.
+func renderSecrets(in hermesv1alpha1.SecretsSpec) map[string]any {
+	out := map[string]any{}
+	if bw := renderBitwarden(in.Bitwarden); len(bw) > 0 {
+		out["bitwarden"] = bw
+	}
+	return out
+}
+
+// renderBitwarden builds config.yaml `secrets.bitwarden`. The access token value
+// is never emitted — only access_token_env (the var name) is; the value rides in
+// as the operator-injected env var hermes reads at runtime.
+func renderBitwarden(in *hermesv1alpha1.BitwardenSpec) map[string]any {
+	if in == nil {
+		return nil
+	}
+	bw := map[string]any{}
+	putBoolPtr(bw, "enabled", in.Enabled)
+	putStr(bw, "access_token_env", in.AccessTokenEnv)
+	putStr(bw, "project_id", in.ProjectID)
+	putStr(bw, "server_url", in.ServerURL)
+	putIntPtr(bw, "cache_ttl_seconds", in.CacheTTLSeconds)
+	putBoolPtr(bw, "override_existing", in.OverrideExisting)
+	putBoolPtr(bw, "auto_install", in.AutoInstall)
+	return bw
 }
 
 // RenderSoul returns the SOUL.md content (empty spec.soul yields no file).

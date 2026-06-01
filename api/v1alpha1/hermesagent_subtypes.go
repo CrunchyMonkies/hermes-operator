@@ -39,7 +39,7 @@ type ModelSpec struct {
 	// +optional
 	BaseURL string `json:"baseURL,omitempty"`
 	// apiMode selects the wire protocol/transport for the endpoint. Optional: same
-	// inheritance as baseURL. Known values at tag v2026.5.16: chat_completions,
+	// inheritance as baseURL. Known values at tag v2026.5.29.2: chat_completions,
 	// anthropic_messages, codex_responses, bedrock_converse (re-verify on tag bump).
 	// -> model.api_mode
 	// +optional
@@ -279,7 +279,7 @@ type DockerRuntimeSpec struct {
 // RuntimeSpec selects the tool/code execution backend.
 type RuntimeSpec struct {
 	// terminalBackend selects where tools run. -> terminal.backend
-	// +kubebuilder:validation:Enum=local;docker;ssh;modal;daytona;vercel_sandbox;singularity
+	// +kubebuilder:validation:Enum=local;docker;ssh;modal;daytona;singularity
 	// +kubebuilder:default=local
 	// +optional
 	TerminalBackend string `json:"terminalBackend,omitempty"`
@@ -295,8 +295,8 @@ type RuntimeSpec struct {
 	// +optional
 	Singularity SingularityRuntimeSpec `json:"singularity,omitempty"`
 	// installDeps, when true (default), pre-installs the terminal backend's deps
-	// onto the shared PVC at startup — the pip SDKs for modal/daytona/vercel_sandbox,
-	// or Apptainer for singularity (none are bundled). Set false to rely on hermes'
+	// onto the shared PVC at startup — the pip SDKs for modal/daytona, or
+	// Apptainer for singularity (none are bundled). Set false to rely on hermes'
 	// runtime lazy-install instead.
 	// +kubebuilder:default=true
 	// +optional
@@ -525,4 +525,45 @@ type MCPSecretEnv struct {
 	// secretRef is the Secret name+key supplying the value.
 	// +required
 	SecretRef SecretKeyRef `json:"secretRef"`
+}
+
+// SecretsSpec groups external secret-manager integrations. Renders to config.yaml `secrets:`.
+type SecretsSpec struct {
+	// bitwarden syncs secrets from Bitwarden Secrets Manager (config.yaml `secrets.bitwarden`).
+	// +optional
+	Bitwarden *BitwardenSpec `json:"bitwarden,omitempty"`
+}
+
+// BitwardenSpec configures Bitwarden Secrets Manager sync via the bws machine
+// account. Renders to config.yaml `secrets.bitwarden`; the access token value is
+// never rendered — it rides in via the operator-injected env var named by
+// accessTokenEnv, which hermes reads at runtime.
+type BitwardenSpec struct {
+	// enabled turns on Bitwarden secret sync (hermes default false).
+	// +optional
+	Enabled *bool `json:"enabled,omitempty"`
+	// accessTokenSecretRef supplies the machine-account access token, injected as the
+	// env var named by accessTokenEnv. Required when enabled.
+	// +optional
+	AccessTokenSecretRef *SecretKeyRef `json:"accessTokenSecretRef,omitempty"`
+	// accessTokenEnv names the env var holding the access token (hermes default BWS_ACCESS_TOKEN).
+	// +optional
+	AccessTokenEnv string `json:"accessTokenEnv,omitempty"`
+	// projectID is the Bitwarden project UUID to sync from.
+	// +optional
+	ProjectID string `json:"projectID,omitempty"`
+	// serverURL points bws at a custom region or self-hosted instance
+	// (e.g. https://vault.bitwarden.eu, or a self-hosted/Vaultwarden URL). Empty = US cloud.
+	// +optional
+	ServerURL string `json:"serverURL,omitempty"`
+	// cacheTTLSeconds caps how long fetched secrets are cached in-process (hermes default 300).
+	// +optional
+	CacheTTLSeconds *int32 `json:"cacheTTLSeconds,omitempty"`
+	// overrideExisting lets Bitwarden values replace existing env vars (hermes default true).
+	// (The access token var is never overwritten by hermes.)
+	// +optional
+	OverrideExisting *bool `json:"overrideExisting,omitempty"`
+	// autoInstall lets the agent download the bws binary on demand (hermes default true).
+	// +optional
+	AutoInstall *bool `json:"autoInstall,omitempty"`
 }

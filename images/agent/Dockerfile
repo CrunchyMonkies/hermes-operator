@@ -1,10 +1,14 @@
 # Derived Hermes Agent image: upstream + Homebrew (persisted on the PVC at
-# runtime) + the package-management skill + a wrapper entrypoint that installs
-# declared apt packages as root before delegating to the upstream entrypoint.
+# runtime) + the package-management skill + an s6-overlay cont-init hook that
+# installs declared apt packages as root before the supervised services start.
+#
+# Upstream (>= v2026.5.x) boots via s6-overlay: ENTRYPOINT is
+# `/init /opt/hermes/docker/main-wrapper.sh` (PID 1 = s6-svscan). We do NOT
+# override that ENTRYPOINT — we only add a cont-init.d hook for the root step.
 #
 # Build context is the repository root:
 #   docker build -f images/agent/Dockerfile .
-ARG UPSTREAM_IMAGE=nousresearch/hermes-agent:v2026.5.16
+ARG UPSTREAM_IMAGE=nousresearch/hermes-agent:v2026.5.29.2
 FROM ${UPSTREAM_IMAGE}
 
 USER root
@@ -44,10 +48,15 @@ RUN git clone --depth=1 https://github.com/Homebrew/brew /opt/homebrew-dist \
 # Embed the auto-activated package-management skill into the bundled skills dir
 # so skills_sync.py copies it to /opt/data/skills on boot (spec §6.3).
 COPY images/agent/skills/package-management /opt/hermes/skills/package-management
+RUN chown -R 10000:10000 /opt/hermes/skills/package-management
 
-# Install the wrapper entrypoint.
-COPY images/agent/entrypoint-wrapper.sh /opt/hermes/docker/entrypoint-wrapper.sh
-RUN chmod 0755 /opt/hermes/docker/entrypoint-wrapper.sh \
-    && chown -R 10000:10000 /opt/hermes/skills/package-management
+# Root-only apt install, wired as an s6-overlay cont-init hook. /init runs
+# /etc/cont-init.d/* as root during stage 2 (before user services), which is
+# the hook point the pre-s6 entrypoint wrapper used to occupy. Named 00- so it
+# runs ahead of upstream's 01-hermes-setup. See images/agent/cont-init.d/00-hermes-apt.
+COPY --chmod=0755 images/agent/cont-init.d/00-hermes-apt /etc/cont-init.d/00-hermes-apt
 
-ENTRYPOINT [ "/usr/bin/tini", "-g", "--", "/opt/hermes/docker/entrypoint-wrapper.sh" ]
+# No ENTRYPOINT/CMD override: inherit upstream's s6-overlay
+# `/init /opt/hermes/docker/main-wrapper.sh`, which runs cont-init.d (incl. the
+# hook above), starts the supervised services, then exec's hermes as UID 10000
+# via `s6-setuidgid hermes`.

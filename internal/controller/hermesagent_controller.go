@@ -242,6 +242,14 @@ func (r *HermesAgentReconciler) secretVersions(ctx context.Context, agent *herme
 	if agent.Spec.AuthJSONBootstrapSecretRef != nil {
 		add(agent.Spec.AuthJSONBootstrapSecretRef.Name)
 	}
+	for _, s := range agent.Spec.MCP.Servers {
+		for _, se := range s.SecretEnv {
+			add(se.SecretRef.Name)
+		}
+	}
+	if bw := agent.Spec.Secrets.Bitwarden; bw != nil && bw.AccessTokenSecretRef != nil {
+		add(bw.AccessTokenSecretRef.Name)
+	}
 
 	out := map[string]string{}
 	for name := range names {
