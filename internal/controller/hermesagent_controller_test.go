@@ -181,6 +181,42 @@ var _ = Describe("HermesAgent Controller", func() {
 			Expect(k8sClient.Create(ctx, a)).NotTo(Succeed())
 		})
 
+		It("rejects a reserved profile name", func() {
+			a := &hermesv1alpha1.HermesAgent{
+				ObjectMeta: metav1.ObjectMeta{Name: "bad-profile-reserved", Namespace: "default"},
+				Spec: hermesv1alpha1.HermesAgentSpec{
+					Image:   "img:v1",
+					Storage: hermesv1alpha1.StorageSpec{Size: &size},
+					Profile: &hermesv1alpha1.ProfileSpec{Name: "default"},
+				},
+			}
+			Expect(k8sClient.Create(ctx, a)).NotTo(Succeed())
+		})
+
+		It("rejects a profile name that violates the pattern", func() {
+			a := &hermesv1alpha1.HermesAgent{
+				ObjectMeta: metav1.ObjectMeta{Name: "bad-profile-pattern", Namespace: "default"},
+				Spec: hermesv1alpha1.HermesAgentSpec{
+					Image:   "img:v1",
+					Storage: hermesv1alpha1.StorageSpec{Size: &size},
+					Profile: &hermesv1alpha1.ProfileSpec{Name: "Staging!"},
+				},
+			}
+			Expect(k8sClient.Create(ctx, a)).NotTo(Succeed())
+		})
+
+		It("accepts a valid profile name", func() {
+			a := &hermesv1alpha1.HermesAgent{
+				ObjectMeta: metav1.ObjectMeta{Name: "good-profile", Namespace: "default"},
+				Spec: hermesv1alpha1.HermesAgentSpec{
+					Image:   "img:v1",
+					Storage: hermesv1alpha1.StorageSpec{Size: &size},
+					Profile: &hermesv1alpha1.ProfileSpec{Name: "staging"},
+				},
+			}
+			Expect(k8sClient.Create(ctx, a)).To(Succeed())
+		})
+
 		It("accepts valid stdio and http mcp servers", func() {
 			a := &hermesv1alpha1.HermesAgent{
 				ObjectMeta: metav1.ObjectMeta{Name: "good-mcp", Namespace: "default"},

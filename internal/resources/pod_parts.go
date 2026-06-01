@@ -289,6 +289,12 @@ func hermesEnv(a *hermesv1alpha1.HermesAgent) []corev1.EnvVar {
 		env = append(env, corev1.EnvVar{Name: "PYTHONPATH", Value: PipSitePackages})
 	}
 
+	// Run under a named profile by pointing HERMES_HOME at its dir (overrides the
+	// image default); the gateway, reloader and bundled-skill sync all key off this.
+	if a.Spec.ProfileName() != "" {
+		env = append(env, corev1.EnvVar{Name: "HERMES_HOME", Value: effectiveHome(a)})
+	}
+
 	// User-provided env appended last (can override operator defaults by name
 	// only if duplicated; Kubernetes keeps the last occurrence).
 	env = append(env, a.Spec.Env...)
@@ -386,6 +392,15 @@ func dockerHost(a *hermesv1alpha1.HermesAgent) string {
 		return "tcp://127.0.0.1:2375"
 	}
 	return "unix://" + DindSocketDir + "/docker.sock"
+}
+
+// effectiveHome is the agent's runtime HERMES_HOME: the named-profile directory
+// ($HERMES_HOME/profiles/<name>) when spec.profile is set, else the default home.
+func effectiveHome(a *hermesv1alpha1.HermesAgent) string {
+	if p := a.Spec.ProfileName(); p != "" {
+		return HermesHome + "/profiles/" + p
+	}
+	return HermesHome
 }
 
 // dindImage resolves the dind sidecar image, swapping to the rootless variant
@@ -596,7 +611,11 @@ ln -sf "$PREFIX/bin/apptainer" %[3]s/singularity
 // spec §4.3 / open question #2). Re-applied every start ⇒ operator-owned config.
 func configInitCommand(a *hermesv1alpha1.HermesAgent) []string {
 	uidgid := fmt.Sprintf("%d:%d", a.Spec.HermesUID, a.Spec.HermesGID)
+	// config.yaml/SOUL.md land in the effective home — the named-profile dir when
+	// spec.profile is set (mkdir -p creates it), else the default home.
+	home := effectiveHome(a)
 	script := fmt.Sprintf(`set -e
+mkdir -p %[2]s
 for f in config.yaml SOUL.md; do
   if [ -f %[1]s/$f ]; then
     cp %[1]s/$f %[2]s/$f
@@ -604,7 +623,14 @@ for f in config.yaml SOUL.md; do
   fi
 done
 chmod 640 %[2]s/config.yaml 2>/dev/null || true
-`, ConfigSrcDir, HermesHome, uidgid)
+`, ConfigSrcDir, home, uidgid)
+	// Named profile: write the sticky active_profile at the base home so interactive
+	// `hermes` (which doesn't see HERMES_HOME=<profile dir>) resolves the same profile.
+	if p := a.Spec.ProfileName(); p != "" {
+		script += fmt.Sprintf(`printf '%%s\n' %[2]s > %[1]s/active_profile
+chown %[3]s %[1]s/active_profile 2>/dev/null || true
+`, HermesHome, p, uidgid)
+	}
 	if a.Spec.Kubeconfig.Enabled {
 		// Write ~/.kube/config (HOME=/opt/data) owned by the hermes user, mode
 		// 0600, with a writable 0700 .kube dir so kubectl's cache works.

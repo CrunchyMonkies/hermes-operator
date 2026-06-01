@@ -40,6 +40,7 @@ import (
 // +kubebuilder:validation:XValidation:rule="!has(self.mcp) || !has(self.mcp.servers) || self.mcp.servers.all(s, !has(s.transport) || (s.transport == 'stdio' ? (has(s.command) && size(s.command) != 0) : (has(s.url) && size(s.url) != 0)))",message="mcp.servers transport=stdio requires command; transport=http/sse requires url"
 // +kubebuilder:validation:XValidation:rule="!has(self.mcp) || !has(self.mcp.servers) || self.mcp.servers.all(s, !has(s.tools) || !((has(s.tools.include) && size(s.tools.include) != 0) && (has(s.tools.exclude) && size(s.tools.exclude) != 0)))",message="mcp.servers tools must set at most one of include or exclude"
 // +kubebuilder:validation:XValidation:rule="!has(self.secrets) || !has(self.secrets.bitwarden) || !has(self.secrets.bitwarden.enabled) || !self.secrets.bitwarden.enabled || has(self.secrets.bitwarden.accessTokenSecretRef)",message="secrets.bitwarden.enabled requires accessTokenSecretRef"
+// +kubebuilder:validation:XValidation:rule="!has(self.profile) || !(self.profile.name in ['hermes','default','test','tmp','root','sudo'])",message="profile.name must not be a reserved hermes profile name (hermes/default/test/tmp/root/sudo)"
 type HermesAgentSpec struct {
 	// image is the agent container image (the operator's derived image with brew).
 	// +required
@@ -53,6 +54,11 @@ type HermesAgentSpec struct {
 	// presetRef deep-merges a HermesConfigPreset under this spec (CR wins).
 	// +optional
 	PresetRef *PresetRef `json:"presetRef,omitempty"`
+
+	// profile runs the agent under a named hermes profile (isolated home under
+	// $HERMES_HOME/profiles/<name>/). Omit to use the default home.
+	// +optional
+	Profile *ProfileSpec `json:"profile,omitempty"`
 
 	// soul renders to /opt/data/SOUL.md (agent persona).
 	// +optional
@@ -183,6 +189,15 @@ type HermesAgentSpec struct {
 	// Role/RoleBinding for the access the agent needs.
 	// +optional
 	Kubeconfig KubeconfigSpec `json:"kubeconfig,omitempty"`
+}
+
+// ProfileName returns the hermes profile the agent runs under, or "" for the
+// default home.
+func (s *HermesAgentSpec) ProfileName() string {
+	if s.Profile != nil {
+		return s.Profile.Name
+	}
+	return ""
 }
 
 // EndpointsStatus reports the in-cluster service endpoints.
