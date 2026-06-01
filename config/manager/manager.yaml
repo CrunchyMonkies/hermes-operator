@@ -63,7 +63,7 @@ spec:
         args:
           - --leader-elect
           - --health-probe-bind-address=:8081
-        image: harbor.bne1.ouchi.com.au/applications/hermes-operator:latest
+        image: controller:latest
         name: manager
         env:
         - name: RELOADER_IMAGE

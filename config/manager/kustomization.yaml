@@ -1,2 +1,9 @@
 resources:
 - manager.yaml
+# The manager image is a kustomize placeholder (`controller`) mapped to the
+# published Harbor image by default; `make deploy IMG=...` overrides it (e.g. the
+# e2e suite points it at the locally built image loaded into Kind).
+images:
+- name: controller
+  newName: harbor.bne1.ouchi.com.au/applications/hermes-operator
+  newTag: latest
