@@ -34,6 +34,8 @@ const (
 	socketTransportTCP = "tcp"
 	// backendSingularity is the terminalBackend value for the Apptainer backend.
 	backendSingularity = "singularity"
+	// backendDocker is the terminalBackend value for the Docker-in-Docker backend.
+	backendDocker = "docker"
 )
 
 // sharedVolumeMounts are the three shared-PVC subPath mounts plus /dev/shm that
@@ -373,7 +375,7 @@ func pick(v, def int32) int32 {
 // dockerBackend reports whether the agent runs tools in a Docker-in-Docker
 // sidecar (terminal.backend == docker, §11.2).
 func dockerBackend(a *hermesv1alpha1.HermesAgent) bool {
-	return a.Spec.Runtime.TerminalBackend == "docker"
+	return a.Spec.Runtime.TerminalBackend == backendDocker
 }
 
 // dockerHost is the DOCKER_HOST the agent uses to reach the dind daemon, and the
