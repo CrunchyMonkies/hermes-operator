@@ -158,7 +158,7 @@ func reloaderEnv(a *hermesv1alpha1.HermesAgent) []corev1.EnvVar {
 		{Name: "RELOADER_AGENT_NAMESPACE", ValueFrom: fieldRef("metadata.namespace")},
 		{Name: "RELOADER_HOMEBREW_PREFIX", Value: HomebrewPrefix(a)},
 		{Name: "RELOADER_HOMEBREW_DIST", Value: "/opt/homebrew-dist"},
-		{Name: "RELOADER_BREW_PACKAGES", Value: strings.Join(a.Spec.Packages.Brew, " ")},
+		{Name: "RELOADER_BREW_PACKAGES", Value: strings.Join(a.Spec.EffectiveBrewPackages(), " ")},
 		{Name: "RELOADER_CUSTOM_SKILLS", Value: strings.Join(skillNames, ",")},
 		{Name: "RELOADER_SKILL_SRC_DIR", Value: SkillSrcDir},
 		{Name: "HERMES_HOME", Value: HermesHome},
@@ -274,18 +274,37 @@ func reassertInvariants(a *hermesv1alpha1.HermesAgent, pod *corev1.PodTemplateSp
 	// ServiceAccount is authoritative over any overlay value (§3.7).
 	pod.Spec.ServiceAccountName = ServiceAccountName(a)
 
-	// DinD sidecar (docker backend) is operator-owned and re-asserted after the
-	// overlay (§11.2): the sidecar, its shared socket volume, and the agent's
-	// DOCKER_HOST + socket mount.
-	if dockerBackend(a) {
-		applyDockerBackend(a, pod)
+	// Docker is operator-owned and re-asserted after the overlay (§11.2): either a
+	// managed dind sidecar + shared socket, or an external daemon (DOCKER_HOST +
+	// optional TLS certs). Gated on dockerEnabled, not the docker terminal backend.
+	if dockerEnabled(a) {
+		applyDocker(a, pod)
 	}
 }
 
-// applyDockerBackend injects (and re-asserts) the operator-managed Docker-in-
-// Docker sidecar and wires the agent container to it (§11.2). Idempotent —
-// upserts by name so it is safe before or after the podTemplate overlay.
-func applyDockerBackend(a *hermesv1alpha1.HermesAgent, pod *corev1.PodTemplateSpec) {
+// applyDocker injects (and re-asserts) the operator-managed docker wiring on the
+// agent container (§11.2). For an external daemon it only sets DOCKER_HOST (plus
+// TLS mount/env); otherwise it injects the dind sidecar + shared socket. Idempotent
+// — upserts by name so it is safe before or after the podTemplate overlay.
+func applyDocker(a *hermesv1alpha1.HermesAgent, pod *corev1.PodTemplateSpec) {
+	if a.Spec.Runtime.Docker.IsExternal() {
+		if tls := a.Spec.Runtime.Docker.TLS; tls != nil {
+			upsertVolume(&pod.Spec.Volumes, dockerCertVolume(tls.SecretName))
+		}
+		hermes := findContainer(pod.Spec.Containers, ContainerHermes)
+		if hermes == nil {
+			return
+		}
+		upsertEnv(&hermes.Env, corev1.EnvVar{Name: "DOCKER_HOST", Value: dockerHost(a)})
+		if a.Spec.Runtime.Docker.TLS != nil {
+			upsertMount(&hermes.VolumeMounts, dockerCertMount())
+			upsertEnv(&hermes.Env, corev1.EnvVar{Name: "DOCKER_TLS_VERIFY", Value: "1"})
+			upsertEnv(&hermes.Env, corev1.EnvVar{Name: "DOCKER_CERT_PATH", Value: hermesv1alpha1.DockerCertMountPath})
+		}
+		return
+	}
+
+	// Managed dind sidecar.
 	if v := dindSocketVolume(a); v != nil {
 		upsertVolume(&pod.Spec.Volumes, *v)
 	}

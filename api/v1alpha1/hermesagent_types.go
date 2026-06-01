@@ -17,6 +17,8 @@ limitations under the License.
 package v1alpha1
 
 import (
+	"slices"
+
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -39,6 +41,7 @@ import (
 // +kubebuilder:validation:XValidation:rule="!has(self.mcp) || !has(self.mcp.servers) || self.mcp.servers.all(s, (has(s.command) && size(s.command) != 0) != (has(s.url) && size(s.url) != 0))",message="each mcp.servers entry must set exactly one of command (stdio) or url (http/sse)"
 // +kubebuilder:validation:XValidation:rule="!has(self.mcp) || !has(self.mcp.servers) || self.mcp.servers.all(s, !has(s.transport) || (s.transport == 'stdio' ? (has(s.command) && size(s.command) != 0) : (has(s.url) && size(s.url) != 0)))",message="mcp.servers transport=stdio requires command; transport=http/sse requires url"
 // +kubebuilder:validation:XValidation:rule="!has(self.mcp) || !has(self.mcp.servers) || self.mcp.servers.all(s, !has(s.tools) || !((has(s.tools.include) && size(s.tools.include) != 0) && (has(s.tools.exclude) && size(s.tools.exclude) != 0)))",message="mcp.servers tools must set at most one of include or exclude"
+// +kubebuilder:validation:XValidation:rule="!has(self.runtime.docker.tls) || (has(self.runtime.docker.externalHost) && size(self.runtime.docker.externalHost) != 0)",message="runtime.docker.tls requires runtime.docker.externalHost"
 type HermesAgentSpec struct {
 	// image is the agent container image (the operator's derived image with brew).
 	// +required
@@ -174,6 +177,17 @@ type HermesAgentSpec struct {
 	// Role/RoleBinding for the access the agent needs.
 	// +optional
 	Kubeconfig KubeconfigSpec `json:"kubeconfig,omitempty"`
+}
+
+// EffectiveBrewPackages is packages.brew plus the `docker` CLI when docker is in
+// use and installCLI isn't disabled (so `docker` is on the agent's PATH without
+// the user listing it). The returned slice is a fresh copy; inputs are unchanged.
+func (s *HermesAgentSpec) EffectiveBrewPackages() []string {
+	pkgs := append([]string(nil), s.Packages.Brew...)
+	if s.Runtime.DockerInstallCLI() && !slices.Contains(pkgs, "docker") {
+		pkgs = append(pkgs, "docker")
+	}
+	return pkgs
 }
 
 // EndpointsStatus reports the in-cluster service endpoints.

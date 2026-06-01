@@ -44,10 +44,11 @@ const (
 	InitApptainer     = "install-apptainer"
 
 	// Volume names.
-	VolShared     = "shared-data"
-	VolConfig     = "config"
-	VolShm        = "dev-shm"
-	VolDindSocket = "dind-socket"
+	VolShared      = "shared-data"
+	VolConfig      = "config"
+	VolShm         = "dev-shm"
+	VolDindSocket  = "dind-socket"
+	VolDockerCerts = "docker-certs"
 
 	// Verified upstream mount points and subPaths (spec §4.1).
 	HermesHome    = "/opt/data"

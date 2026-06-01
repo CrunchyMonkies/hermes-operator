@@ -343,20 +343,30 @@ func pick(v, def int32) int32 {
 	return def
 }
 
-// dockerBackend reports whether the agent runs tools in a Docker-in-Docker
-// sidecar (terminal.backend == docker, §11.2).
-func dockerBackend(a *hermesv1alpha1.HermesAgent) bool {
-	return a.Spec.Runtime.TerminalBackend == "docker"
+// dockerEnabled reports whether a docker daemon should be made available to the
+// agent at all — explicitly (runtime.docker.enabled), implicitly via an external
+// host, or because the docker terminal backend requires one.
+func dockerEnabled(a *hermesv1alpha1.HermesAgent) bool {
+	return a.Spec.Runtime.DockerEnabled()
 }
 
-// dockerHost is the DOCKER_HOST the agent uses to reach the dind daemon, and the
-// address the daemon listens on. unix (default) shares an emptyDir socket; tcp
-// uses intra-pod localhost.
+// dockerHost is the DOCKER_HOST the agent uses to reach the daemon (external host,
+// managed dind unix socket, or intra-pod tcp). See DockerRuntimeSpec.DockerHost.
 func dockerHost(a *hermesv1alpha1.HermesAgent) string {
-	if a.Spec.Runtime.Docker.SocketTransport == "tcp" {
-		return "tcp://127.0.0.1:2375"
+	return a.Spec.Runtime.Docker.DockerHost()
+}
+
+// dockerCertVolume mounts an external daemon's TLS client-cert Secret.
+func dockerCertVolume(secretName string) corev1.Volume {
+	return corev1.Volume{
+		Name:         VolDockerCerts,
+		VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{SecretName: secretName}},
 	}
-	return "unix://" + DindSocketDir + "/docker.sock"
+}
+
+// dockerCertMount is the read-only mount for the external-daemon TLS certs.
+func dockerCertMount() corev1.VolumeMount {
+	return corev1.VolumeMount{Name: VolDockerCerts, MountPath: hermesv1alpha1.DockerCertMountPath, ReadOnly: true}
 }
 
 // dindImage resolves the dind sidecar image, swapping to the rootless variant

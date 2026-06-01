@@ -17,6 +17,8 @@ limitations under the License.
 package resources
 
 import (
+	"slices"
+	"strings"
 	"testing"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -372,6 +374,161 @@ func TestLocalBackendHasNoDind(t *testing.T) {
 	}
 	if findContainer(dep.Spec.Template.Spec.Containers, ContainerDind) != nil {
 		t.Error("dind must not be injected for the local backend")
+	}
+}
+
+func dockerHostEnv(c *corev1.Container) string {
+	for _, e := range c.Env {
+		if e.Name == "DOCKER_HOST" {
+			return e.Value
+		}
+	}
+	return ""
+}
+
+// TestDockerEnabledLocalBackendInjectsDind: docker.enabled turns the managed dind
+// sidecar on even when tools run locally (terminalBackend stays local).
+func TestDockerEnabledLocalBackendInjectsDind(t *testing.T) {
+	a := baseAgent() // local backend
+	a.Spec.Runtime.Docker.Enabled = ptrBool(true)
+
+	dep, err := Deployment(a, "sha256:abc", "")
+	if err != nil {
+		t.Fatalf("Deployment: %v", err)
+	}
+	tpl := dep.Spec.Template
+	if findContainer(tpl.Spec.Containers, ContainerDind) == nil {
+		t.Fatal("dind sidecar must be injected when docker.enabled, regardless of backend")
+	}
+	hermes := findContainer(tpl.Spec.Containers, ContainerHermes)
+	if got := dockerHostEnv(hermes); got != "unix://"+DindSocketDir+"/docker.sock" {
+		t.Errorf("agent DOCKER_HOST = %q, want managed dind unix socket", got)
+	}
+	if findVolume(tpl.Spec.Volumes, VolDindSocket) == nil {
+		t.Errorf("%s socket volume missing", VolDindSocket)
+	}
+}
+
+// TestExternalDockerNoSidecar: an externalHost skips the sidecar and points the
+// agent at the remote daemon.
+func TestExternalDockerNoSidecar(t *testing.T) {
+	a := baseAgent()
+	a.Spec.Runtime.Docker.ExternalHost = "tcp://dockerd.infra.svc:2375"
+
+	dep, err := Deployment(a, "sha256:abc", "")
+	if err != nil {
+		t.Fatalf("Deployment: %v", err)
+	}
+	tpl := dep.Spec.Template
+	if findContainer(tpl.Spec.Containers, ContainerDind) != nil {
+		t.Error("external docker must not inject a dind sidecar")
+	}
+	if findVolume(tpl.Spec.Volumes, VolDindSocket) != nil {
+		t.Error("external docker must not create the dind socket volume")
+	}
+	hermes := findContainer(tpl.Spec.Containers, ContainerHermes)
+	if got := dockerHostEnv(hermes); got != "tcp://dockerd.infra.svc:2375" {
+		t.Errorf("agent DOCKER_HOST = %q, want the external host", got)
+	}
+}
+
+// TestExternalDockerTLS: docker.tls mounts the cert Secret and sets the TLS env.
+func TestExternalDockerTLS(t *testing.T) {
+	a := baseAgent()
+	a.Spec.Runtime.Docker.ExternalHost = "tcp://dockerd.infra.svc:2376"
+	a.Spec.Runtime.Docker.TLS = &hermesv1alpha1.DockerTLSSpec{SecretName: "docker-client-certs"}
+
+	dep, err := Deployment(a, "sha256:abc", "")
+	if err != nil {
+		t.Fatalf("Deployment: %v", err)
+	}
+	tpl := dep.Spec.Template
+	vol := findVolume(tpl.Spec.Volumes, VolDockerCerts)
+	if vol == nil || vol.Secret == nil || vol.Secret.SecretName != "docker-client-certs" {
+		t.Fatalf("docker-certs volume not wired to the Secret: %+v", vol)
+	}
+	hermes := findContainer(tpl.Spec.Containers, ContainerHermes)
+	m := findMount(hermes, hermesv1alpha1.DockerCertMountPath)
+	if m == nil || m.Name != VolDockerCerts || !m.ReadOnly {
+		t.Errorf("agent cert mount = %+v, want read-only %s", m, VolDockerCerts)
+	}
+	want := map[string]string{"DOCKER_TLS_VERIFY": "1", "DOCKER_CERT_PATH": hermesv1alpha1.DockerCertMountPath}
+	for _, e := range hermes.Env {
+		if v, ok := want[e.Name]; ok {
+			if e.Value != v {
+				t.Errorf("%s = %q, want %q", e.Name, e.Value, v)
+			}
+			delete(want, e.Name)
+		}
+	}
+	if len(want) != 0 {
+		t.Errorf("missing TLS env vars: %v", want)
+	}
+}
+
+// reloaderBrew returns the RELOADER_BREW_PACKAGES env value (space-joined list).
+func reloaderBrew(t *testing.T, a *hermesv1alpha1.HermesAgent) []string {
+	t.Helper()
+	dep, err := Deployment(a, "sha256:abc", "")
+	if err != nil {
+		t.Fatalf("Deployment: %v", err)
+	}
+	reloader := findContainer(dep.Spec.Template.Spec.Containers, ContainerReloader)
+	if reloader == nil {
+		t.Fatal("reloader container missing")
+	}
+	for _, e := range reloader.Env {
+		if e.Name == "RELOADER_BREW_PACKAGES" {
+			return strings.Fields(e.Value)
+		}
+	}
+	return nil
+}
+
+// TestDockerInstallCLI: enabling docker auto-installs the `docker` CLI via brew,
+// merges with the user's list (no dup), opts out via installCLI=false, and is
+// absent when docker is off.
+func TestDockerInstallCLI(t *testing.T) {
+	// enabled, no user brew -> just docker.
+	a := baseAgent()
+	a.Spec.Runtime.Docker.Enabled = ptrBool(true)
+	if got := reloaderBrew(t, a); !slices.Contains(got, "docker") {
+		t.Errorf("docker.enabled should auto-install docker, got brew %v", got)
+	}
+
+	// merges with the user's list, no duplicate when already present.
+	a.Spec.Packages.Brew = []string{"kubectl", "docker"}
+	got := reloaderBrew(t, a)
+	dockerCount := 0
+	for _, p := range got {
+		if p == "docker" {
+			dockerCount++
+		}
+	}
+	if !slices.Contains(got, "kubectl") || dockerCount != 1 {
+		t.Errorf("brew should be {kubectl, docker} with no dup, got %v", got)
+	}
+
+	// external host also auto-installs the CLI (needed to reach the remote daemon).
+	ext := baseAgent()
+	ext.Spec.Runtime.Docker.ExternalHost = "tcp://dockerd:2375"
+	if got := reloaderBrew(t, ext); !slices.Contains(got, "docker") {
+		t.Errorf("externalHost should auto-install docker, got %v", got)
+	}
+
+	// opt-out: installCLI=false keeps only the user's list.
+	off := baseAgent()
+	off.Spec.Runtime.Docker.Enabled = ptrBool(true)
+	off.Spec.Runtime.Docker.InstallCLI = ptrBool(false)
+	off.Spec.Packages.Brew = []string{"jq"}
+	if got := reloaderBrew(t, off); slices.Contains(got, "docker") {
+		t.Errorf("installCLI=false must not add docker, got %v", got)
+	}
+
+	// docker off (local, not enabled) -> no docker.
+	none := baseAgent()
+	if got := reloaderBrew(t, none); slices.Contains(got, "docker") {
+		t.Errorf("docker disabled must not install docker, got %v", got)
 	}
 }
 

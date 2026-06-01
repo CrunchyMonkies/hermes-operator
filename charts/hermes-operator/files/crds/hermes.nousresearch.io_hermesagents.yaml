@@ -9690,12 +9690,36 @@ spec:
                     type: object
                   docker:
                     description: |-
-                      DockerRuntimeSpec configures the Docker-in-Docker sidecar the operator injects
-                      when runtime.terminalBackend is docker (§11.2).
+                      DockerRuntimeSpec configures docker for the agent (§11.2). When in use the
+                      operator either runs a managed Docker-in-Docker sidecar (default) or, if
+                      externalHost is set, points the agent's docker client at an existing daemon.
+                      Docker is "in use" when enabled, when externalHost is set, or when
+                      terminalBackend is docker (which requires it).
                     properties:
+                      enabled:
+                        description: |-
+                          enabled provisions a docker daemon for the agent (DOCKER_HOST on the agent +
+                          a usable `docker` CLI) independent of terminalBackend. terminalBackend=docker
+                          and a set externalHost both imply enabled. Add `docker` to packages.brew (or
+                          use an image that bundles it) so the CLI is present in the agent container.
+                        type: boolean
+                      externalHost:
+                        description: |-
+                          externalHost points the agent's docker client at an existing daemon
+                          (tcp:// / unix:// / ssh://, e.g. tcp://dockerd.infra.svc:2376) instead of
+                          running the managed dind sidecar. When set, no sidecar is created and the
+                          dind-only fields (image/rootless/socketTransport/storage) are ignored.
+                        type: string
                       image:
                         default: docker:27-dind
                         type: string
+                      installCLI:
+                        default: true
+                        description: |-
+                          installCLI auto-installs the `docker` CLI via packages.brew whenever docker is
+                          in use, so it's on the agent's PATH. Defaults true; set false if the agent
+                          image already bundles docker or you want to pin a version via packages.brew.
+                        type: boolean
                       mountCwdToWorkspace:
                         default: false
                         type: boolean
@@ -9779,6 +9803,18 @@ spec:
                             - type: string
                             pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
                             x-kubernetes-int-or-string: true
+                        type: object
+                      tls:
+                        description: tls supplies client certificates for a TLS-secured
+                          externalHost.
+                        properties:
+                          secretName:
+                            description: |-
+                              secretName references a Secret containing ca.pem, cert.pem and key.pem. The
+                              operator mounts it read-only at DockerCertMountPath and sets DOCKER_TLS_VERIFY=1
+                            type: string
+                        required:
+                        - secretName
                         type: object
                     type: object
                   installDeps:
@@ -10012,6 +10048,9 @@ spec:
               rule: '!has(self.mcp) || !has(self.mcp.servers) || self.mcp.servers.all(s,
                 !has(s.tools) || !((has(s.tools.include) && size(s.tools.include)
                 != 0) && (has(s.tools.exclude) && size(s.tools.exclude) != 0)))'
+            - message: runtime.docker.tls requires runtime.docker.externalHost
+              rule: '!has(self.runtime.docker.tls) || (has(self.runtime.docker.externalHost)
+                && size(self.runtime.docker.externalHost) != 0)'
           status:
             description: HermesAgentStatus defines the observed state of HermesAgent.
             properties:

@@ -111,7 +111,7 @@ func (r *HermesAgentReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		ConfigYAML:     configYAML,
 		Soul:           soul,
 		SkillPayloads:  skillPayloads,
-		BrewPackages:   agent.Spec.Packages.Brew,
+		BrewPackages:   agent.Spec.EffectiveBrewPackages(),
 		SecretVersions: secretVersions,
 	})
 

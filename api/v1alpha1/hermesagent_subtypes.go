@@ -254,9 +254,33 @@ type DockerRuntimeStorage struct {
 	Size *resource.Quantity `json:"size,omitempty"`
 }
 
-// DockerRuntimeSpec configures the Docker-in-Docker sidecar the operator injects
-// when runtime.terminalBackend is docker (§11.2).
+// DockerRuntimeSpec configures docker for the agent (§11.2). When in use the
+// operator either runs a managed Docker-in-Docker sidecar (default) or, if
+// externalHost is set, points the agent's docker client at an existing daemon.
+// Docker is "in use" when enabled, when externalHost is set, or when
+// terminalBackend is docker (which requires it).
 type DockerRuntimeSpec struct {
+	// enabled provisions a docker daemon for the agent (DOCKER_HOST on the agent +
+	// a usable `docker` CLI) independent of terminalBackend. terminalBackend=docker
+	// and a set externalHost both imply enabled. Add `docker` to packages.brew (or
+	// use an image that bundles it) so the CLI is present in the agent container.
+	// +optional
+	Enabled *bool `json:"enabled,omitempty"`
+	// externalHost points the agent's docker client at an existing daemon
+	// (tcp:// / unix:// / ssh://, e.g. tcp://dockerd.infra.svc:2376) instead of
+	// running the managed dind sidecar. When set, no sidecar is created and the
+	// dind-only fields (image/rootless/socketTransport/storage) are ignored.
+	// +optional
+	ExternalHost string `json:"externalHost,omitempty"`
+	// tls supplies client certificates for a TLS-secured externalHost.
+	// +optional
+	TLS *DockerTLSSpec `json:"tls,omitempty"`
+	// installCLI auto-installs the `docker` CLI via packages.brew whenever docker is
+	// in use, so it's on the agent's PATH. Defaults true; set false if the agent
+	// image already bundles docker or you want to pin a version via packages.brew.
+	// +kubebuilder:default=true
+	// +optional
+	InstallCLI *bool `json:"installCLI,omitempty"`
 	// +kubebuilder:default="docker:27-dind"
 	// +optional
 	Image string `json:"image,omitempty"`
@@ -274,6 +298,40 @@ type DockerRuntimeSpec struct {
 	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
 	// +optional
 	Storage DockerRuntimeStorage `json:"storage,omitempty"`
+}
+
+// DockerTLSSpec wires client certificates for a TLS-secured external docker daemon.
+type DockerTLSSpec struct {
+	// secretName references a Secret containing ca.pem, cert.pem and key.pem. The
+	// operator mounts it read-only at DockerCertMountPath and sets DOCKER_TLS_VERIFY=1
+	// + DOCKER_CERT_PATH so the agent's docker client authenticates to the daemon.
+	// +required
+	SecretName string `json:"secretName"`
+}
+
+// Docker daemon endpoint contract shared by the resources and config packages.
+const (
+	// DindSocketPath is the managed dind daemon's unix socket inside the pod. Must
+	// match resources.DindSocketDir + "/docker.sock".
+	DindSocketPath = "/var/run/dind/docker.sock"
+	// DockerCertMountPath is where an external daemon's TLS client certs are mounted.
+	DockerCertMountPath = "/etc/docker/certs"
+)
+
+// IsExternal reports whether the agent targets an external daemon (no sidecar).
+func (d DockerRuntimeSpec) IsExternal() bool { return d.ExternalHost != "" }
+
+// DockerHost resolves the DOCKER_HOST the agent uses (and, for managed dind, the
+// address the daemon listens on): an externalHost wins; else tcp intra-pod when
+// socketTransport=tcp; else the managed dind unix socket.
+func (d DockerRuntimeSpec) DockerHost() string {
+	if d.ExternalHost != "" {
+		return d.ExternalHost
+	}
+	if d.SocketTransport == "tcp" {
+		return "tcp://127.0.0.1:2375"
+	}
+	return "unix://" + DindSocketPath
 }
 
 // RuntimeSpec selects the tool/code execution backend.
@@ -301,6 +359,20 @@ type RuntimeSpec struct {
 	// +kubebuilder:default=true
 	// +optional
 	InstallDeps *bool `json:"installDeps,omitempty"`
+}
+
+// DockerEnabled reports whether a docker daemon should be available to the agent:
+// explicitly (docker.enabled), implicitly via an external host, or because the
+// docker terminal backend requires one.
+func (r RuntimeSpec) DockerEnabled() bool {
+	d := r.Docker
+	return r.TerminalBackend == "docker" || (d.Enabled != nil && *d.Enabled) || d.IsExternal()
+}
+
+// DockerInstallCLI reports whether the operator should auto-install the `docker`
+// CLI via brew — docker is in use and installCLI isn't disabled (defaults true).
+func (r RuntimeSpec) DockerInstallCLI() bool {
+	return r.DockerEnabled() && (r.Docker.InstallCLI == nil || *r.Docker.InstallCLI)
 }
 
 // SingularityRuntimeSpec configures the Apptainer install for the singularity

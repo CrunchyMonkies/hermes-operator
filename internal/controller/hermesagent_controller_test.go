@@ -181,6 +181,39 @@ var _ = Describe("HermesAgent Controller", func() {
 			Expect(k8sClient.Create(ctx, a)).NotTo(Succeed())
 		})
 
+		It("rejects runtime.docker.tls without externalHost", func() {
+			a := &hermesv1alpha1.HermesAgent{
+				ObjectMeta: metav1.ObjectMeta{Name: "bad-docker-tls", Namespace: "default"},
+				Spec: hermesv1alpha1.HermesAgentSpec{
+					Image:   "img:v1",
+					Storage: hermesv1alpha1.StorageSpec{Size: &size},
+					Runtime: hermesv1alpha1.RuntimeSpec{
+						Docker: hermesv1alpha1.DockerRuntimeSpec{
+							TLS: &hermesv1alpha1.DockerTLSSpec{SecretName: "certs"},
+						},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, a)).NotTo(Succeed())
+		})
+
+		It("accepts external docker with tls", func() {
+			a := &hermesv1alpha1.HermesAgent{
+				ObjectMeta: metav1.ObjectMeta{Name: "good-docker-ext", Namespace: "default"},
+				Spec: hermesv1alpha1.HermesAgentSpec{
+					Image:   "img:v1",
+					Storage: hermesv1alpha1.StorageSpec{Size: &size},
+					Runtime: hermesv1alpha1.RuntimeSpec{
+						Docker: hermesv1alpha1.DockerRuntimeSpec{
+							ExternalHost: "tcp://dockerd.infra.svc:2376",
+							TLS:          &hermesv1alpha1.DockerTLSSpec{SecretName: "certs"},
+						},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, a)).To(Succeed())
+		})
+
 		It("accepts valid stdio and http mcp servers", func() {
 			a := &hermesv1alpha1.HermesAgent{
 				ObjectMeta: metav1.ObjectMeta{Name: "good-mcp", Namespace: "default"},

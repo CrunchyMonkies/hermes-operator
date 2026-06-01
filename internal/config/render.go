@@ -22,6 +22,7 @@ package config
 import (
 	"encoding/json"
 	"sort"
+	"strings"
 
 	"sigs.k8s.io/yaml"
 
@@ -130,20 +131,27 @@ func renderTyped(spec *hermesv1alpha1.HermesAgentSpec) map[string]any {
 		var dockerExtraArgs []string
 		networkHost := false
 
-		// Expose the dind daemon to the tool sandboxes (docker-out-of-docker) so the
-		// agent can run docker inside its sandbox. Mirrors the agent container's
-		// DOCKER_HOST. The docker CLI must also be present in the sandbox — add
-		// `docker` to packages.brew (mounted + on PATH below) or use a docker-enabled
-		// terminal.docker_image.
-		if spec.Runtime.Docker.SocketTransport == "tcp" {
-			dockerEnv["DOCKER_HOST"] = "tcp://127.0.0.1:2375"
-			networkHost = true // reach the daemon's intra-pod tcp port
+		// Expose the daemon to the tool sandboxes (docker-out-of-docker) so the agent
+		// can run docker inside its sandbox. Mirrors the agent container's DOCKER_HOST
+		// (managed dind socket/tcp, or an external host). The docker CLI must also be
+		// present in the sandbox — add `docker` to packages.brew (mounted + on PATH
+		// below) or use a docker-enabled terminal.docker_image.
+		host := spec.Runtime.Docker.DockerHost()
+		dockerEnv["DOCKER_HOST"] = host
+		if sock, ok := strings.CutPrefix(host, "unix://"); ok {
+			// The daemon's unix socket is on the emptyDir the dind container mounts, so
+			// dind can bind it into tool containers (matches resources.DindSocketDir).
+			dockerVolumes = append(dockerVolumes, sock+":"+sock)
 		} else {
-			// Must match resources.DindSocketDir; the daemon's unix socket is on the
-			// emptyDir the dind container mounts, so dind can bind it into tool containers.
-			const dockerSock = "/var/run/dind/docker.sock"
-			dockerVolumes = append(dockerVolumes, dockerSock+":"+dockerSock)
-			dockerEnv["DOCKER_HOST"] = "unix://" + dockerSock
+			networkHost = true // tcp/ssh (intra-pod dind or external) needs the network
+		}
+		// TLS-secured external daemon: mount the certs into the sandbox and point the
+		// client at them (mirrors the agent container's external-TLS wiring).
+		if spec.Runtime.Docker.TLS != nil {
+			certDir := hermesv1alpha1.DockerCertMountPath
+			dockerVolumes = append(dockerVolumes, certDir+":"+certDir+":ro")
+			dockerEnv["DOCKER_TLS_VERIFY"] = "1"
+			dockerEnv["DOCKER_CERT_PATH"] = certDir
 		}
 
 		if spec.Kubeconfig.Enabled {

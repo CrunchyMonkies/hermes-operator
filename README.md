@@ -30,8 +30,10 @@ Highlights:
   `honcho-ai`, Apptainer for singularity) so they survive restarts.
 - Declarative **skill activation** and **package installation** — pip (init
   container, persisted on the PVC via `PYTHONPATH`) + Homebrew (no sudo).
-- Operator-managed **Docker-in-Docker** sidecar for the `docker` terminal backend,
-  and an in-cluster **kubeconfig** written to `~/.kube/config`.
+- Operator-managed **Docker-in-Docker** sidecar — for the `docker` terminal backend
+  or, via `docker.enabled`, just to give the agent a daemon in any mode; or point at
+  an **external docker** daemon (`docker.externalHost`, with managed TLS). Plus an
+  in-cluster **kubeconfig** written to `~/.kube/config`.
 - A single shared **Ingress** config defaulted across every HTTP surface, with
   auto webhook ingress for webhook-capable channels.
 - Full **`podTemplate` overlay** strategic-merged over the operator's base pod,
@@ -231,11 +233,15 @@ channel-webhook ingresses unless they set their own.
 | `runtime.installDeps` | *bool | `true` | Pre-install the backend's deps (modal/daytona/vercel SDKs, or Apptainer). |
 | `runtime.codeExecution.timeout` / `.maxToolCalls` | int32 | — | → `code_execution.*` |
 | `runtime.delegation.maxIterations` / `.maxConcurrentChildren` | int32 | — | → `delegation.*` |
-| `runtime.docker.image` | string | `docker:27-dind` | DinD sidecar image. |
+| `runtime.docker.enabled` | *bool | `false` | Provision a docker daemon for the agent (DOCKER_HOST + the `docker` CLI) **independent of terminalBackend**. `terminalBackend=docker` and a set `externalHost` both imply it. |
+| `runtime.docker.installCLI` | *bool | `true` | When docker is in use, auto-add `docker` to `packages.brew` so the CLI is on the agent's PATH. Set false if your image bundles docker or you pin a version in `packages.brew`. |
+| `runtime.docker.externalHost` | string | — | Target an existing daemon (`tcp://` / `unix://` / `ssh://`) instead of the managed dind sidecar. When set, no sidecar is created and the dind-only fields below are ignored. |
+| `runtime.docker.tls.secretName` | string | — | Secret with `ca.pem`/`cert.pem`/`key.pem` for a TLS-secured `externalHost`; mounted read-only at `/etc/docker/certs` with `DOCKER_TLS_VERIFY=1` + `DOCKER_CERT_PATH`. Requires `externalHost`. |
+| `runtime.docker.image` | string | `docker:27-dind` | Managed dind sidecar image. |
 | `runtime.docker.rootless` | bool | `false` | Selects the `-dind-rootless` image when image is default. |
-| `runtime.docker.socketTransport` | `unix`\|`tcp` | `unix` | |
+| `runtime.docker.socketTransport` | `unix`\|`tcp` | `unix` | Managed dind socket transport. |
 | `runtime.docker.mountCwdToWorkspace` | bool | `false` | → `terminal.docker_mount_cwd_to_workspace` |
-| `runtime.docker.resources` | ResourceRequirements | — | DinD sidecar resources. |
+| `runtime.docker.resources` | ResourceRequirements | — | Managed dind sidecar resources. |
 | `runtime.docker.storage.size` | Quantity | — | dind image store (subPath on the shared PVC). |
 | `runtime.singularity.installImage` | string | `rockylinux:9` | Image for the Apptainer installer (needs curl/rpm2cpio/cpio). |
 
@@ -272,6 +278,7 @@ channel-webhook ingresses unless they set their own.
 - `channels[].ingress.enabled` requires a host (`channels[].ingress.host` or `spec.ingress.host`).
 - each `skills.custom[]` must set exactly one of `sourceRef` or `inline`.
 - each `mcp.servers[]` must set exactly one of `command` (stdio) or `url` (http/sse); `transport` must match; `tools` sets at most one of `include`/`exclude`.
+- `runtime.docker.tls` requires `runtime.docker.externalHost`.
 - `serviceAccount.name` is required when `serviceAccount.create=false`.
 - `kubeconfig.enabled` requires `serviceAccount.automountToken != false`.
 
@@ -409,6 +416,30 @@ spec:
             secretRef: { name: mcp-secrets, key: remote-token }
         extraConfig:                            # long-tail knobs (oauth, sampling)
           sampling: { enabled: true, max_rpm: 10 }
+```
+
+### Docker available in local mode (managed dind, no docker backend)
+
+```yaml
+spec:
+  runtime:
+    terminalBackend: local      # tools still run in-container
+    docker:
+      enabled: true             # dind sidecar + DOCKER_HOST; the `docker` CLI is
+                                # auto-installed via brew (docker.installCLI, default true)
+```
+
+### External docker daemon with TLS
+
+```yaml
+spec:
+  runtime:
+    docker:
+      externalHost: tcp://dockerd.infra.svc:2376   # no sidecar; implies enabled
+      tls:
+        secretName: docker-client-certs            # ca.pem / cert.pem / key.pem
+# kubectl -n <ns> create secret generic docker-client-certs \
+#   --from-file=ca.pem --from-file=cert.pem --from-file=key.pem
 ```
 
 A complete, production CR (custom endpoint + docker + kubeconfig + channels +

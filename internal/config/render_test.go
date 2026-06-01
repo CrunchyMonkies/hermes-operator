@@ -347,6 +347,45 @@ func TestDockerSocketAlwaysExposed(t *testing.T) {
 	}
 }
 
+// TestDockerBackendExternalHost: the docker backend can target an external daemon
+// (no socket bind; --network=host; TLS certs mounted + env when tls is set).
+func TestDockerBackendExternalHost(t *testing.T) {
+	out, _ := RenderConfigYAML(&hermesv1alpha1.HermesAgentSpec{
+		Runtime: hermesv1alpha1.RuntimeSpec{
+			TerminalBackend: "docker",
+			Docker: hermesv1alpha1.DockerRuntimeSpec{
+				ExternalHost: "tcp://dockerd.infra.svc:2376",
+				TLS:          &hermesv1alpha1.DockerTLSSpec{SecretName: "docker-client-certs"},
+			},
+		},
+	})
+	terminal := mustParse(t, out)["terminal"].(map[string]any)
+	denv := terminal["docker_env"].(map[string]any)
+	if denv["DOCKER_HOST"] != "tcp://dockerd.infra.svc:2376" {
+		t.Errorf("DOCKER_HOST = %v, want the external host", denv["DOCKER_HOST"])
+	}
+	if denv["DOCKER_TLS_VERIFY"] != "1" || denv["DOCKER_CERT_PATH"] != hermesv1alpha1.DockerCertMountPath {
+		t.Errorf("TLS env not set in sandbox: %v", denv)
+	}
+	// tcp/external -> no socket bind, but the cert dir is mounted read-only.
+	certBind := hermesv1alpha1.DockerCertMountPath + ":" + hermesv1alpha1.DockerCertMountPath + ":ro"
+	foundCert := false
+	for _, v := range terminal["docker_volumes"].([]any) {
+		if v == certBind {
+			foundCert = true
+		}
+		if v == "tcp://dockerd.infra.svc:2376" { // sanity: never bind a tcp host as a volume
+			t.Errorf("tcp host must not be bind-mounted: %v", v)
+		}
+	}
+	if !foundCert {
+		t.Errorf("cert dir not mounted into sandbox: %v", terminal["docker_volumes"])
+	}
+	if args := terminal["docker_extra_args"].([]any); len(args) != 1 || args[0] != "--network=host" {
+		t.Errorf("external host needs --network=host, got %v", terminal["docker_extra_args"])
+	}
+}
+
 func TestExtraConfigMergeTypedWins(t *testing.T) {
 	spec := &hermesv1alpha1.HermesAgentSpec{
 		Model:                 hermesv1alpha1.ModelSpec{Default: "typed-model"},
