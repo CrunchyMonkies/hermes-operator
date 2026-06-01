@@ -16,7 +16,7 @@ limitations under the License.
 
 // Package config renders a HermesAgent spec into the on-disk config.yaml the
 // Hermes gateway consumes, plus the SOUL.md persona file. Keys mirror the
-// verified upstream cli-config.yaml.example (tag v2026.5.16). See spec §3.4.
+// verified upstream cli-config.yaml.example (tag v2026.5.29.2). See spec §3.4.
 package config
 
 import (
@@ -28,8 +28,9 @@ import (
 	hermesv1alpha1 "github.com/matthew/hermes-operator/api/v1alpha1"
 )
 
-// ConfigVersion is the upstream _config_version at the pinned tag (v2026.5.16).
-const ConfigVersion = 23
+// ConfigVersion is the upstream _config_version at the pinned tag (v2026.5.29.2).
+// The 23→24 bump is purely additive (new optional keys); no structural migration.
+const ConfigVersion = 24
 
 // RenderConfigYAML builds config.yaml from the typed spec, applies extraConfig
 // per precedence, and marshals to YAML. `${VAR}` strings pass through untouched

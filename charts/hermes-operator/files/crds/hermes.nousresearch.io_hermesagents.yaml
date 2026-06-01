@@ -917,7 +917,7 @@ spec:
                   apiMode:
                     description: |-
                       apiMode selects the wire protocol/transport for the endpoint. Optional: same
-                      inheritance as baseURL. Known values at tag v2026.5.16: chat_completions,
+                      inheritance as baseURL. Known values at tag v2026.5.29.2: chat_completions,
                       anthropic_messages, codex_responses, bedrock_converse (re-verify on tag bump).
                       -> model.api_mode
                     type: string
@@ -9662,8 +9662,12 @@ spec:
               runAsRoot:
                 default: true
                 description: |-
-                  runAsRoot starts the container as root so the entrypoint can usermod/gosu
-                  before dropping to the hermes user.
+                  runAsRoot governs the operator's own init containers (config seeding, pip
+                  install, apptainer install): true starts them as root, false as the hermes
+                  user. The MAIN agent container always starts as root regardless — the
+                  upstream image boots via s6-overlay (/init = PID 1), which requires root
+                  for its cont-init bootstrap and then drops the hermes process to hermesUID
+                  via s6-setuidgid.
                 type: boolean
               runtime:
                 description: RuntimeSpec selects the tool/code execution backend.
@@ -9785,8 +9789,8 @@ spec:
                     default: true
                     description: |-
                       installDeps, when true (default), pre-installs the terminal backend's deps
-                      onto the shared PVC at startup — the pip SDKs for modal/daytona/vercel_sandbox,
-                      or Apptainer for singularity (none are bundled). Set false to rely on hermes'
+                      onto the shared PVC at startup — the pip SDKs for modal/daytona, or
+                      Apptainer for singularity (none are bundled). Set false to rely on hermes'
                       runtime lazy-install instead.
                     type: boolean
                   singularity:
@@ -9814,7 +9818,6 @@ spec:
                     - ssh
                     - modal
                     - daytona
-                    - vercel_sandbox
                     - singularity
                     type: string
                   terminalTimeout:

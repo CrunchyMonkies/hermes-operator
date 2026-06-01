@@ -32,14 +32,16 @@ type webhookPlatform struct {
 
 // webhookPlatforms is the registry of channel types that actually serve an
 // INBOUND webhook in hermes. Verified against third_party/hermes-agent at tag
-// v2026.5.16 — RE-VERIFY WHEN BUMPING THE HERMES TAG.
+// v2026.5.29.2 — RE-VERIFY WHEN BUMPING THE HERMES TAG.
 //
-// Only telegram qualifies today: gateway/platforms/telegram.py starts a webhook
-// server when TELEGRAM_WEBHOOK_URL is set (with a REQUIRED TELEGRAM_WEBHOOK_SECRET)
-// and otherwise long-polls. discord (gateway websocket), slack (socket mode), and
-// whatsapp/signal/email (bridge/SMTP/outbound) never receive inbound webhooks, so
-// they are intentionally absent and are never auto-wired. teams/google_chat have
-// no adapter at this tag.
+// Of the channel types the operator exposes, only telegram qualifies:
+// gateway/platforms/telegram.py starts a webhook server when TELEGRAM_WEBHOOK_URL
+// is set (with a REQUIRED TELEGRAM_WEBHOOK_SECRET) and otherwise long-polls.
+// discord (gateway websocket), slack (socket mode), and whatsapp/signal/email
+// (bridge/SMTP/outbound) never receive inbound webhooks, so they are
+// intentionally absent and are never auto-wired. teams/google_chat have no
+// adapter. (Upstream added wecom_callback/matrix/dingtalk/feishu adapters at
+// this tag, but the operator does not expose those channel types.)
 var webhookPlatforms = map[string]webhookPlatform{
 	"telegram": {
 		portEnv:   "TELEGRAM_WEBHOOK_PORT",

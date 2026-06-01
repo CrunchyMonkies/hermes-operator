@@ -176,18 +176,20 @@ func podSecurityContext(a *hermesv1alpha1.HermesAgent) *corev1.PodSecurityContex
 	return &corev1.PodSecurityContext{FSGroup: ptr.To(a.Spec.FSGroup)}
 }
 
-// hermesSecurityContext: start as root so the entrypoint can usermod/gosu,
-// unless runAsRoot is false (then run directly as the hermes user; §4.2).
-func hermesSecurityContext(a *hermesv1alpha1.HermesAgent) *corev1.SecurityContext {
-	if a.Spec.RunAsRoot {
-		return &corev1.SecurityContext{
-			RunAsUser:    ptr.To(int64(0)),
-			RunAsNonRoot: ptr.To(false),
-		}
-	}
+// hermesSecurityContext returns the main agent container's security context.
+// The upstream image boots via s6-overlay (/init = PID 1), which MUST start as
+// root to run its cont-init bootstrap (UID remap to HERMES_UID, volume chown,
+// config seed, skills sync) and then drop the workload to the configured UID
+// via `s6-setuidgid hermes` (main-wrapper.sh). The hermes PROCESS therefore
+// always runs unprivileged (HermesUID, passed via the HERMES_UID env) even
+// though the container's PID 1 is root — so we always start this container as
+// root. spec.runAsRoot no longer affects this container (under s6 the process
+// cannot stay root through the entrypoint); it still governs the operator's own
+// init containers (see initSecurityContext).
+func hermesSecurityContext(_ *hermesv1alpha1.HermesAgent) *corev1.SecurityContext {
 	return &corev1.SecurityContext{
-		RunAsUser:    ptr.To(a.Spec.HermesUID),
-		RunAsNonRoot: ptr.To(true),
+		RunAsUser:    ptr.To(int64(0)),
+		RunAsNonRoot: ptr.To(false),
 	}
 }
 

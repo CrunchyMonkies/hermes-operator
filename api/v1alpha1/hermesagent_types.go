@@ -159,8 +159,12 @@ type HermesAgentSpec struct {
 	// +kubebuilder:default=10000
 	// +optional
 	HermesGID int64 `json:"hermesGID,omitempty"`
-	// runAsRoot starts the container as root so the entrypoint can usermod/gosu
-	// before dropping to the hermes user.
+	// runAsRoot governs the operator's own init containers (config seeding, pip
+	// install, apptainer install): true starts them as root, false as the hermes
+	// user. The MAIN agent container always starts as root regardless — the
+	// upstream image boots via s6-overlay (/init = PID 1), which requires root
+	// for its cont-init bootstrap and then drops the hermes process to hermesUID
+	// via s6-setuidgid.
 	// +kubebuilder:default=true
 	// +optional
 	RunAsRoot bool `json:"runAsRoot,omitempty"`

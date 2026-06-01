@@ -39,7 +39,7 @@ type ModelSpec struct {
 	// +optional
 	BaseURL string `json:"baseURL,omitempty"`
 	// apiMode selects the wire protocol/transport for the endpoint. Optional: same
-	// inheritance as baseURL. Known values at tag v2026.5.16: chat_completions,
+	// inheritance as baseURL. Known values at tag v2026.5.29.2: chat_completions,
 	// anthropic_messages, codex_responses, bedrock_converse (re-verify on tag bump).
 	// -> model.api_mode
 	// +optional
@@ -279,7 +279,7 @@ type DockerRuntimeSpec struct {
 // RuntimeSpec selects the tool/code execution backend.
 type RuntimeSpec struct {
 	// terminalBackend selects where tools run. -> terminal.backend
-	// +kubebuilder:validation:Enum=local;docker;ssh;modal;daytona;vercel_sandbox;singularity
+	// +kubebuilder:validation:Enum=local;docker;ssh;modal;daytona;singularity
 	// +kubebuilder:default=local
 	// +optional
 	TerminalBackend string `json:"terminalBackend,omitempty"`
@@ -295,8 +295,8 @@ type RuntimeSpec struct {
 	// +optional
 	Singularity SingularityRuntimeSpec `json:"singularity,omitempty"`
 	// installDeps, when true (default), pre-installs the terminal backend's deps
-	// onto the shared PVC at startup — the pip SDKs for modal/daytona/vercel_sandbox,
-	// or Apptainer for singularity (none are bundled). Set false to rely on hermes'
+	// onto the shared PVC at startup — the pip SDKs for modal/daytona, or
+	// Apptainer for singularity (none are bundled). Set false to rely on hermes'
 	// runtime lazy-install instead.
 	// +kubebuilder:default=true
 	// +optional
