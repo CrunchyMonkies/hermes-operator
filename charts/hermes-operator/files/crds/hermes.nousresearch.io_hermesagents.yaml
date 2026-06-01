@@ -9592,6 +9592,20 @@ spec:
                         type: integer
                     type: object
                 type: object
+              profile:
+                description: |-
+                  profile runs the agent under a named hermes profile (isolated home under
+                  $HERMES_HOME/profiles/<name>/). Omit to use the default home.
+                properties:
+                  name:
+                    description: |-
+                      name is the hermes profile id (lowercase alphanumeric, '-' and '_'; ≤64
+                      chars). Reserved names (hermes/default/test/tmp/root/sudo) are rejected.
+                    pattern: ^[a-z0-9][a-z0-9_-]{0,63}$
+                    type: string
+                required:
+                - name
+                type: object
               replicas:
                 default: 1
                 description: replicas must be 0 (paused) or 1 (running) — the gateway
@@ -10051,6 +10065,8 @@ spec:
             - message: runtime.docker.tls requires runtime.docker.externalHost
               rule: '!has(self.runtime.docker.tls) || (has(self.runtime.docker.externalHost)
                 && size(self.runtime.docker.externalHost) != 0)'
+            - message: profile.name must not be a reserved hermes profile name (hermes/default/test/tmp/root/sudo)
+              rule: '!has(self.profile) || !(self.profile.name in [''hermes'',''default'',''test'',''tmp'',''root'',''sudo''])'
           status:
             description: HermesAgentStatus defines the observed state of HermesAgent.
             properties:

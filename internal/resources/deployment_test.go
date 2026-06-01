@@ -532,6 +532,81 @@ func TestDockerInstallCLI(t *testing.T) {
 	}
 }
 
+// TestProfileRunsUnderNamedHome: spec.profile points HERMES_HOME at the profile
+// dir on the agent + reloader, and config-init writes config/SOUL there + the
+// sticky active_profile, while the kubeconfig stays HOME-relative.
+func TestProfileRunsUnderNamedHome(t *testing.T) {
+	a := baseAgent()
+	a.Spec.Profile = &hermesv1alpha1.ProfileSpec{Name: "staging"}
+	a.Spec.Kubeconfig.Enabled = true
+	const home = "/opt/data/profiles/staging"
+
+	// agent container HERMES_HOME -> profile dir.
+	if v, _, ok := envByName(a, "HERMES_HOME"); !ok || v != home {
+		t.Errorf("agent HERMES_HOME = %q ok=%v, want %q", v, ok, home)
+	}
+
+	dep, err := Deployment(a, "sha256:abc", "")
+	if err != nil {
+		t.Fatalf("Deployment: %v", err)
+	}
+	// reloader HERMES_HOME -> profile dir (so skills materialize there).
+	reloader := findContainer(dep.Spec.Template.Spec.Containers, ContainerReloader)
+	var rh string
+	for _, e := range reloader.Env {
+		if e.Name == "HERMES_HOME" {
+			rh = e.Value
+		}
+	}
+	if rh != home {
+		t.Errorf("reloader HERMES_HOME = %q, want %q", rh, home)
+	}
+
+	// config-init writes into the profile dir + active_profile; kubeconfig stays
+	// at the base home's ~/.kube.
+	script := configInitCommand(a)[2]
+	for _, want := range []string{
+		"mkdir -p " + home,
+		"cp /etc/hermes-config/$f " + home + "/$f",
+		"chmod 640 " + home + "/config.yaml",
+		"staging > /opt/data/active_profile",
+		"cp /etc/hermes-config/kube-config /opt/data/.kube/config",
+	} {
+		if !strings.Contains(script, want) {
+			t.Errorf("config-init script missing %q:\n%s", want, script)
+		}
+	}
+	if strings.Contains(script, home+"/.kube") {
+		t.Errorf("kubeconfig must stay at the base home, not the profile dir:\n%s", script)
+	}
+}
+
+// TestNoProfileDefaultHome: without spec.profile, nothing changes — no HERMES_HOME
+// on the agent, reloader stays /opt/data, config-init targets the base home.
+func TestNoProfileDefaultHome(t *testing.T) {
+	a := baseAgent()
+	if _, _, ok := envByName(a, "HERMES_HOME"); ok {
+		t.Error("agent should not set HERMES_HOME when no profile is configured")
+	}
+	dep, err := Deployment(a, "sha256:abc", "")
+	if err != nil {
+		t.Fatalf("Deployment: %v", err)
+	}
+	reloader := findContainer(dep.Spec.Template.Spec.Containers, ContainerReloader)
+	for _, e := range reloader.Env {
+		if e.Name == "HERMES_HOME" && e.Value != "/opt/data" {
+			t.Errorf("reloader HERMES_HOME = %q, want /opt/data", e.Value)
+		}
+	}
+	script := configInitCommand(a)[2]
+	if strings.Contains(script, "/profiles/") || strings.Contains(script, "active_profile") {
+		t.Errorf("no-profile config-init must not reference profiles/active_profile:\n%s", script)
+	}
+	if !strings.Contains(script, "cp /etc/hermes-config/$f /opt/data/$f") {
+		t.Errorf("no-profile config-init should target the base home:\n%s", script)
+	}
+}
+
 func ptrBool(b bool) *bool { return &b }
 
 func ptrI64(i int64) *int64 { return &i }

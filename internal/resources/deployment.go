@@ -161,7 +161,7 @@ func reloaderEnv(a *hermesv1alpha1.HermesAgent) []corev1.EnvVar {
 		{Name: "RELOADER_BREW_PACKAGES", Value: strings.Join(a.Spec.EffectiveBrewPackages(), " ")},
 		{Name: "RELOADER_CUSTOM_SKILLS", Value: strings.Join(skillNames, ",")},
 		{Name: "RELOADER_SKILL_SRC_DIR", Value: SkillSrcDir},
-		{Name: "HERMES_HOME", Value: HermesHome},
+		{Name: "HERMES_HOME", Value: effectiveHome(a)},
 	}
 	return env
 }

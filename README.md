@@ -26,6 +26,8 @@ Highlights:
   OpenAI-compatible endpoints (with per-model context windows + key injection).
 - **MCP servers** — typed `mcp.servers[]` (stdio + http/sse) with per-server tool
   filtering and Secret-backed credentials injected for `${VAR}` interpolation.
+- **Named hermes profiles** — `profile.name` runs the agent under an isolated
+  `profiles/<name>/` home (own config/SOUL/skills/state) via HERMES_HOME.
 - **Pre-install of optional deps** onto the PVC (pip SDKs for channels/backends,
   `honcho-ai`, Apptainer for singularity) so they survive restarts.
 - Declarative **skill activation** and **package installation** — pip (init
@@ -65,7 +67,8 @@ Config-rendered fields note their `config.yaml` target as `→ key`.
 | `imagePullSecrets` | []LocalObjectReference | — | Pull secrets (name refs). |
 | `replicas` | int (0–1) | `1` | Singleton; `0` pauses (scales the Deployment to 0). |
 | `presetRef.name` | string | — | A `HermesConfigPreset` deep-merged under this spec (CR wins). |
-| `soul` | string | — | Persona rendered to `/opt/data/SOUL.md`. |
+| `profile.name` | string | — | Run under a named hermes profile: config/SOUL/skills/state live in `/opt/data/profiles/<name>/` (HERMES_HOME points there). Pattern `^[a-z0-9][a-z0-9_-]{0,63}$`; reserved names rejected. |
+| `soul` | string | — | Persona rendered to `$HERMES_HOME/SOUL.md` (the profile dir when `profile` is set). |
 | `env` | []corev1.EnvVar | — | Extra agent-container env (appended after operator vars). |
 | `envFrom` | []corev1.EnvFromSource | — | Mirrored onto the agent container. |
 | `authJSONBootstrapSecretRef` | SecretKeyRef | — | Seeds `auth.json` once on first boot. |
@@ -279,6 +282,7 @@ channel-webhook ingresses unless they set their own.
 - each `skills.custom[]` must set exactly one of `sourceRef` or `inline`.
 - each `mcp.servers[]` must set exactly one of `command` (stdio) or `url` (http/sse); `transport` must match; `tools` sets at most one of `include`/`exclude`.
 - `runtime.docker.tls` requires `runtime.docker.externalHost`.
+- `profile.name` must match `^[a-z0-9][a-z0-9_-]{0,63}$` and not be a reserved hermes name (`hermes`/`default`/`test`/`tmp`/`root`/`sudo`).
 - `serviceAccount.name` is required when `serviceAccount.create=false`.
 - `kubeconfig.enabled` requires `serviceAccount.automountToken != false`.
 
@@ -440,6 +444,16 @@ spec:
         secretName: docker-client-certs            # ca.pem / cert.pem / key.pem
 # kubectl -n <ns> create secret generic docker-client-certs \
 #   --from-file=ca.pem --from-file=cert.pem --from-file=key.pem
+```
+
+### Run under a named hermes profile
+
+```yaml
+spec:
+  profile:
+    name: staging          # HERMES_HOME=/opt/data/profiles/staging; config/SOUL/
+                           # skills/memory/sessions isolated there. Gateway runs
+                           # under `staging`; the default home is untouched.
 ```
 
 A complete, production CR (custom endpoint + docker + kubeconfig + channels +

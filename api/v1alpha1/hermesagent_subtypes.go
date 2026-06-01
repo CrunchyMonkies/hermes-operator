@@ -504,6 +504,17 @@ type PresetRef struct {
 	Name string `json:"name"`
 }
 
+// ProfileSpec runs the agent under a named hermes profile: its config.yaml,
+// SOUL.md, skills, memory and sessions live under $HERMES_HOME/profiles/<name>/,
+// isolated from the default home. The operator points HERMES_HOME at that dir.
+type ProfileSpec struct {
+	// name is the hermes profile id (lowercase alphanumeric, '-' and '_'; ≤64
+	// chars). Reserved names (hermes/default/test/tmp/root/sudo) are rejected.
+	// +kubebuilder:validation:Pattern=`^[a-z0-9][a-z0-9_-]{0,63}$`
+	// +required
+	Name string `json:"name"`
+}
+
 // MCPSpec configures the Model Context Protocol servers the agent connects to.
 // Each entry renders into config.yaml `mcp_servers:` keyed by name.
 type MCPSpec struct {
