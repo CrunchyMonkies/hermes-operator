@@ -94,29 +94,56 @@ func (r *HermesAgentReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		}
 	}
 
-	// 3. Render config.yaml + SOUL.md + skill payloads.
-	configYAML, err := config.RenderConfigYAML(&agent.Spec)
+	// 3. Render config.yaml + SOUL.md + skill payloads (default profile) and each
+	//    named profile's independent config.yaml + SOUL.md.
+	configYAML, err := config.RenderConfigYAML(&agent.Spec.DefaultProfile, &agent.Spec)
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("render config: %w", err)
 	}
-	soul := config.RenderSoul(&agent.Spec)
+	soul := config.RenderSoul(&agent.Spec.DefaultProfile)
 	skillPayloads := inlineSkillPayloads(agent)
+
+	profileConfigs := map[string][]byte{}
+	profileSouls := map[string]string{}
+	for _, p := range agent.Spec.Profiles {
+		resolved, err := resolveProfileConfig(agent.Spec.DefaultProfile, p.ProfileConfig)
+		if err != nil {
+			return ctrl.Result{}, fmt.Errorf("resolve profile %q: %w", p.Name, err)
+		}
+		pcfg, err := config.RenderConfigYAML(&resolved, &agent.Spec)
+		if err != nil {
+			return ctrl.Result{}, fmt.Errorf("render profile %q config: %w", p.Name, err)
+		}
+		profileConfigs[p.Name] = pcfg
+		profileSouls[p.Name] = config.RenderSoul(&resolved)
+	}
 
 	// 4. configHash (Secrets contribute resourceVersion only; never decoded).
 	secretVersions, err := r.secretVersions(ctx, agent)
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("collect secret versions: %w", err)
 	}
+	profilePayloads := map[string]string{}
+	for name, cfg := range profileConfigs {
+		profilePayloads[name+"/config.yaml"] = string(cfg)
+	}
+	for _, p := range agent.Spec.Profiles {
+		profilePayloads[p.Name+"/SOUL.md"] = resources.ProfileSoulContent(p, profileSouls[p.Name])
+		if p.IsEnabled() {
+			profilePayloads[p.Name+"/gateway_state.json"] = resources.GatewayStateRunning
+		}
+	}
 	hash := config.ConfigHash(config.HashInputs{
-		ConfigYAML:     configYAML,
-		Soul:           soul,
-		SkillPayloads:  skillPayloads,
-		BrewPackages:   agent.Spec.Packages.Brew,
-		SecretVersions: secretVersions,
+		ConfigYAML:      configYAML,
+		Soul:            soul,
+		SkillPayloads:   skillPayloads,
+		ProfilePayloads: profilePayloads,
+		BrewPackages:    agent.Spec.Packages.Brew,
+		SecretVersions:  secretVersions,
 	})
 
 	// 5. Server-side apply all children (owner refs set).
-	if err := r.applyChildren(ctx, agent, configYAML, soul, hash); err != nil {
+	if err := r.applyChildren(ctx, agent, configYAML, soul, profileConfigs, profileSouls, hash); err != nil {
 		return ctrl.Result{}, err
 	}
 
@@ -128,7 +155,7 @@ func (r *HermesAgentReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	return ctrl.Result{}, nil
 }
 
-func (r *HermesAgentReconciler) applyChildren(ctx context.Context, agent *hermesv1alpha1.HermesAgent, configYAML []byte, soul, hash string) error {
+func (r *HermesAgentReconciler) applyChildren(ctx context.Context, agent *hermesv1alpha1.HermesAgent, configYAML []byte, soul string, profileConfigs map[string][]byte, profileSouls map[string]string, hash string) error {
 	// ServiceAccount + reloader RBAC.
 	if sa := resources.ServiceAccount(agent); sa != nil {
 		if err := r.apply(ctx, agent, sa); err != nil {
@@ -154,7 +181,7 @@ func (r *HermesAgentReconciler) applyChildren(ctx context.Context, agent *hermes
 	}
 
 	// ConfigMaps.
-	if err := r.apply(ctx, agent, resources.ConfigMap(agent, configYAML, soul)); err != nil {
+	if err := r.apply(ctx, agent, resources.ConfigMap(agent, configYAML, soul, profileConfigs, profileSouls)); err != nil {
 		return err
 	}
 	for _, cm := range resources.SkillConfigMaps(agent) {
@@ -208,7 +235,7 @@ func (r *HermesAgentReconciler) apply(ctx context.Context, owner *hermesv1alpha1
 // they participate in the configHash.
 func inlineSkillPayloads(agent *hermesv1alpha1.HermesAgent) map[string]string {
 	out := map[string]string{}
-	for _, s := range agent.Spec.Skills.Custom {
+	for _, s := range agent.Spec.DefaultProfile.Skills.Custom {
 		if s.Inline != "" {
 			out[s.Name] = s.Inline
 		}
@@ -235,7 +262,7 @@ func (r *HermesAgentReconciler) secretVersions(ctx context.Context, agent *herme
 			add(e.ValueFrom.SecretKeyRef.Name)
 		}
 	}
-	for _, ch := range agent.Spec.Channels {
+	for _, ch := range agent.Spec.DefaultProfile.Channels {
 		if ch.SecretRef != nil {
 			add(ch.SecretRef.Name)
 		}
@@ -246,13 +273,23 @@ func (r *HermesAgentReconciler) secretVersions(ctx context.Context, agent *herme
 	if agent.Spec.AuthJSONBootstrapSecretRef != nil {
 		add(agent.Spec.AuthJSONBootstrapSecretRef.Name)
 	}
-	for _, s := range agent.Spec.MCP.Servers {
+	for _, s := range agent.Spec.DefaultProfile.MCP.Servers {
 		for _, se := range s.SecretEnv {
 			add(se.SecretRef.Name)
 		}
 	}
-	if bw := agent.Spec.Secrets.Bitwarden; bw != nil && bw.AccessTokenSecretRef != nil {
+	if bw := agent.Spec.DefaultProfile.Secrets.Bitwarden; bw != nil && bw.AccessTokenSecretRef != nil {
 		add(bw.AccessTokenSecretRef.Name)
+	}
+	for _, p := range agent.Spec.Profiles {
+		if p.EnvSecretRef != nil {
+			add(p.EnvSecretRef.Name)
+		}
+		for _, ch := range p.Channels {
+			if ch.SecretRef != nil {
+				add(ch.SecretRef.Name)
+			}
+		}
 	}
 
 	out := map[string]string{}
@@ -287,6 +324,7 @@ func (r *HermesAgentReconciler) updateStatus(ctx context.Context, agent *hermesv
 		agent.Status.ServiceName = svc.Name
 	}
 	agent.Status.Endpoints = deriveEndpoints(agent)
+	agent.Status.Profiles = deriveProfiles(agent)
 
 	setCondition(agent, "VolumeBound", agent.Spec.Storage.ExistingClaim != "" || agent.Spec.Storage.Size != nil)
 	setCondition(agent, "ConfigInSync", true)
@@ -323,6 +361,22 @@ func deriveEndpoints(agent *hermesv1alpha1.HermesAgent) hermesv1alpha1.Endpoints
 		ep.Dashboard = fmt.Sprintf("%s:%d", svcName, port)
 	}
 	return ep
+}
+
+// deriveProfiles reports the hosted named profiles and their homes.
+func deriveProfiles(agent *hermesv1alpha1.HermesAgent) []hermesv1alpha1.ProfileStatus {
+	if len(agent.Spec.Profiles) == 0 {
+		return nil
+	}
+	out := make([]hermesv1alpha1.ProfileStatus, 0, len(agent.Spec.Profiles))
+	for _, p := range agent.Spec.Profiles {
+		out = append(out, hermesv1alpha1.ProfileStatus{
+			Name:    p.Name,
+			Home:    resources.ProfileHome(p.Name),
+			Enabled: p.IsEnabled(),
+		})
+	}
+	return out
 }
 
 func setCondition(agent *hermesv1alpha1.HermesAgent, condType string, ok bool) {

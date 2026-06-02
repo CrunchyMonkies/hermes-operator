@@ -17,6 +17,7 @@ limitations under the License.
 package resources
 
 import (
+	"strings"
 	"testing"
 
 	networkingv1 "k8s.io/api/networking/v1"
@@ -59,7 +60,7 @@ func TestTelegramWebhookAutoWired(t *testing.T) {
 		Annotations: map[string]string{"cert-manager.io/cluster-issuer": "prod"},
 		TLS:         []hermesv1alpha1.IngressTLS{{Hosts: []string{testHost}, SecretName: "lana-tls"}},
 	}
-	a.Spec.Channels = []hermesv1alpha1.ChannelSpec{
+	a.Spec.DefaultProfile.Channels = []hermesv1alpha1.ChannelSpec{
 		{Type: "telegram", Enabled: true, Ingress: hermesv1alpha1.IngressSpec{Enabled: true}},
 	}
 
@@ -108,13 +109,57 @@ func TestTelegramWebhookAutoWired(t *testing.T) {
 	}
 }
 
+// A named profile's webhook-capable channel gets a globally-unique Service port
+// (wh-<n> scheme), a profile-scoped Ingress at /webhooks/<profile>/<type>, and the
+// operator-computed PORT/URL appended to that profile's .env — while the default
+// profile (no channels) gets no container webhook env.
+func TestNamedProfileWebhookWired(t *testing.T) {
+	a := baseAgent()
+	a.Spec.Ingress.Host = testHost
+	a.Spec.Profiles = []hermesv1alpha1.ProfileSpec{
+		{
+			Name: "support",
+			ProfileConfig: hermesv1alpha1.ProfileConfig{
+				Channels: []hermesv1alpha1.ChannelSpec{
+					{Type: "telegram", Enabled: true, Ingress: hermesv1alpha1.IngressSpec{Enabled: true}},
+				},
+			},
+		},
+	}
+
+	// Globally-unique Service port under the named-profile scheme.
+	if _, ok := servicePort(a, "wh-0"); !ok {
+		t.Error("named profile webhook should get a Service port wh-0")
+	}
+	// Profile-scoped Ingress path.
+	ing := ingressBySurface(a, "wh-support-telegram")
+	if ing == nil {
+		t.Fatal("named profile webhook ingress missing")
+	}
+	if got := ing.Spec.Rules[0].HTTP.Paths[0].Path; got != "/webhooks/support/telegram" {
+		t.Errorf("named webhook path = %q, want /webhooks/support/telegram", got)
+	}
+	// config-init appends webhook PORT/URL to profiles/support/.env (non-secret).
+	script := configInitCommand(a)[2]
+	if !strings.Contains(script, "TELEGRAM_WEBHOOK_PORT=") || !strings.Contains(script, ">> /opt/data/profiles/support/.env") {
+		t.Errorf("named profile .env should get webhook port appended:\n%s", script)
+	}
+	if !strings.Contains(script, "TELEGRAM_WEBHOOK_URL=https://"+testHost+"/webhooks/support/telegram") {
+		t.Errorf("named profile .env should get webhook url appended:\n%s", script)
+	}
+	// Default profile has no channels -> no container webhook env.
+	if _, _, ok := envByName(a, "TELEGRAM_WEBHOOK_PORT"); ok {
+		t.Error("default profile must not get webhook env when it has no channels")
+	}
+}
+
 // An explicit webhookPort is honored as-is; auto-assignment skips reserved ports
 // and is deterministic across calls.
 func TestWebhookPortAssignment(t *testing.T) {
 	// Explicit port wins, no auto-assignment.
 	a := baseAgent()
 	a.Spec.Ingress.Host = testHost
-	a.Spec.Channels = []hermesv1alpha1.ChannelSpec{
+	a.Spec.DefaultProfile.Channels = []hermesv1alpha1.ChannelSpec{
 		{Type: "telegram", Enabled: true, WebhookPort: 9001, Ingress: hermesv1alpha1.IngressSpec{Enabled: true}},
 	}
 	if p, _ := servicePort(a, channelPortName("telegram")); p != 9001 {
@@ -128,15 +173,15 @@ func TestWebhookPortAssignment(t *testing.T) {
 	b := baseAgent()
 	b.Spec.Ingress.Host = testHost
 	b.Spec.APIServer = hermesv1alpha1.APIServerSpec{Enabled: true, Port: WebhookPortBase}
-	b.Spec.Channels = []hermesv1alpha1.ChannelSpec{
+	b.Spec.DefaultProfile.Channels = []hermesv1alpha1.ChannelSpec{
 		{Type: "telegram", Enabled: true, Ingress: hermesv1alpha1.IngressSpec{Enabled: true}},
 	}
-	got := resolvedWebhookPorts(b)
-	if got[0] != WebhookPortBase+1 {
-		t.Errorf("auto port = %d, want %d (skip reserved %d)", got[0], WebhookPortBase+1, WebhookPortBase)
+	got := webhookEndpoints(b)
+	if len(got) != 1 || got[0].port != WebhookPortBase+1 {
+		t.Errorf("auto port = %v, want %d (skip reserved %d)", got, WebhookPortBase+1, WebhookPortBase)
 	}
-	if again := resolvedWebhookPorts(b); again[0] != got[0] {
-		t.Errorf("port assignment not deterministic: %d vs %d", again[0], got[0])
+	if again := webhookEndpoints(b); len(again) != 1 || again[0].port != got[0].port {
+		t.Errorf("port assignment not deterministic: %v vs %v", again, got)
 	}
 }
 
@@ -145,7 +190,7 @@ func TestWebhookPortAssignment(t *testing.T) {
 func TestNonWebhookChannelsNotWired(t *testing.T) {
 	a := baseAgent()
 	a.Spec.Ingress.Host = testHost
-	a.Spec.Channels = []hermesv1alpha1.ChannelSpec{
+	a.Spec.DefaultProfile.Channels = []hermesv1alpha1.ChannelSpec{
 		{Type: "discord", Enabled: true, Ingress: hermesv1alpha1.IngressSpec{Enabled: true}},
 		{Type: "slack", Enabled: true, Ingress: hermesv1alpha1.IngressSpec{Enabled: true}},
 		{Type: "telegram", Enabled: true}, // polling: ingress not enabled

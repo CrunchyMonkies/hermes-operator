@@ -29,8 +29,9 @@ type ModelSpec struct {
 	Default string `json:"default,omitempty"`
 	// provider routing mode (e.g. auto), or the name of a customProviders entry to
 	// make it the active provider — the operator then fills base_url/api_mode from
-	// that entry, so they aren't repeated here. -> model.provider
-	// +kubebuilder:default=auto
+	// that entry, so they aren't repeated here. Defaults to hermes' own default when
+	// unset (left undefaulted here so named profiles can inherit a custom provider
+	// from spec.defaultProfile). -> model.provider
 	// +optional
 	Provider string `json:"provider,omitempty"`
 	// baseURL is the provider endpoint. Optional: when provider names a
@@ -202,6 +203,7 @@ type SkillsSpec struct {
 	CreationNudgeInterval int32 `json:"creationNudgeInterval,omitempty"`
 	// custom skills written into the PVC and auto-activated.
 	// +optional
+	// +kubebuilder:validation:MaxItems=100
 	Custom []CustomSkill `json:"custom,omitempty"`
 	// enablePackageManagementSkill ensures the built-in package-management skill
 	// is present and enabled.
@@ -432,6 +434,112 @@ type PresetRef struct {
 	Name string `json:"name"`
 }
 
+// SecretFileRef references a Secret key whose value is a complete file (e.g. a
+// dotenv body). The operator mounts it read-only and copies it into place; it
+// never decodes the value.
+type SecretFileRef struct {
+	// name of the Secret.
+	// +required
+	Name string `json:"name"`
+	// key within the Secret holding the file body. Defaults to ".env".
+	// +kubebuilder:default=".env"
+	// +optional
+	Key string `json:"key,omitempty"`
+}
+
+// ProfileConfig is the config object shared by the default profile
+// (spec.defaultProfile) and every named profile (spec.profiles[]). It carries the
+// per-profile sections that render into that profile's config.yaml / SOUL.md and
+// its messaging channels — everything that makes a profile an independent agent
+// instance. Pod-level concerns (image, storage, apiServer, dashboard, ingress,
+// packages, serviceAccount, probes, …) live on HermesAgentSpec and are shared by
+// all profiles in the pod.
+//
+// +kubebuilder:validation:XValidation:rule="!has(self.skills) || !has(self.skills.custom) || self.skills.custom.all(s, has(s.sourceRef) != has(s.inline))",message="each skills.custom entry must set exactly one of sourceRef or inline"
+// +kubebuilder:validation:XValidation:rule="!has(self.mcp) || !has(self.mcp.servers) || self.mcp.servers.all(s, has(s.command) != has(s.url))",message="each mcp.servers entry must set exactly one of command (stdio) or url (http/sse)"
+// +kubebuilder:validation:XValidation:rule="!has(self.mcp) || !has(self.mcp.servers) || self.mcp.servers.all(s, !has(s.transport) || (s.transport == 'stdio' ? has(s.command) : has(s.url)))",message="mcp.servers transport=stdio requires command; transport=http/sse requires url"
+// +kubebuilder:validation:XValidation:rule="!has(self.mcp) || !has(self.mcp.servers) || self.mcp.servers.all(s, !has(s.tools) || !(has(s.tools.include) && has(s.tools.exclude)))",message="mcp.servers tools must set at most one of include or exclude"
+// +kubebuilder:validation:XValidation:rule="!has(self.secrets) || !has(self.secrets.bitwarden) || !has(self.secrets.bitwarden.enabled) || !self.secrets.bitwarden.enabled || has(self.secrets.bitwarden.accessTokenSecretRef)",message="secrets.bitwarden.enabled requires accessTokenSecretRef"
+type ProfileConfig struct {
+	// soul renders to this profile's SOUL.md (persona; also the discovery marker
+	// for named profiles).
+	// +optional
+	Soul string `json:"soul,omitempty"`
+	// +optional
+	Model ModelSpec `json:"model,omitempty"`
+	// +optional
+	Agent AgentSpec `json:"agent,omitempty"`
+	// +optional
+	Compression CompressionSpec `json:"compression,omitempty"`
+	// +optional
+	Memory MemorySpec `json:"memory,omitempty"`
+	// +optional
+	Runtime RuntimeSpec `json:"runtime,omitempty"`
+	// mcp configures Model Context Protocol servers (config.yaml `mcp_servers`).
+	// +optional
+	MCP MCPSpec `json:"mcp,omitempty"`
+	// secrets wires external secret managers (config.yaml `secrets`).
+	// +optional
+	Secrets SecretsSpec `json:"secrets,omitempty"`
+	// searxng wires a self-hosted SearXNG instance for free web search.
+	// +optional
+	Searxng SearxngSpec `json:"searxng,omitempty"`
+	// honcho wires cross-session user modeling via a Honcho instance.
+	// +optional
+	Honcho HonchoSpec `json:"honcho,omitempty"`
+	// channels binds messaging platforms for this profile.
+	// +optional
+	// +kubebuilder:validation:MaxItems=50
+	Channels []ChannelSpec `json:"channels,omitempty"`
+	// +optional
+	Skills SkillsSpec `json:"skills,omitempty"`
+	// extraConfig is deep-merged into this profile's config.yaml (free-form).
+	// +kubebuilder:pruning:PreserveUnknownFields
+	// +optional
+	ExtraConfig *runtime.RawExtension `json:"extraConfig,omitempty"`
+	// extraConfigPrecedence controls whether extraConfig merges or overrides.
+	// +kubebuilder:validation:Enum=merge;override
+	// +optional
+	ExtraConfigPrecedence string `json:"extraConfigPrecedence,omitempty"`
+}
+
+// ProfileSpec declares one named hermes profile: a complete, independent agent
+// instance living under $HERMES_HOME/profiles/<name>/, with its own gateway
+// process and bot token. It carries the same ProfileConfig as spec.defaultProfile
+// (the config keys sit inline under the entry); sections it leaves unset inherit
+// spec.defaultProfile. The profile's gateway is discovered (SOUL.md marker) and
+// auto-started (gateway_state=running) by the upstream image in the same pod.
+type ProfileSpec struct {
+	// name is the hermes profile id (lowercase alphanumeric, '-' and '_'; ≤64
+	// chars). Reserved names (hermes/default/test/tmp/root/sudo) are rejected.
+	// +kubebuilder:validation:Pattern=`^[a-z0-9][a-z0-9_-]{0,63}$`
+	// +required
+	Name string `json:"name"`
+
+	// enabled controls whether this profile's gateway auto-starts on boot (writes
+	// gateway_state=running). When false the profile is rendered and discovered but
+	// its gateway stays down until started manually. Defaults true.
+	// +kubebuilder:default=true
+	// +optional
+	Enabled *bool `json:"enabled,omitempty"`
+
+	// envSecretRef supplies this profile's .env (KEY=VALUE dotenv body) from a
+	// Secret. The upstream image loads it with override=True so the profile's bot
+	// tokens stay isolated from the container env and from other profiles. The
+	// operator mounts it read-only and copies it to profiles/<name>/.env without
+	// decoding it; operator-computed non-secret webhook vars are appended after it.
+	// +optional
+	EnvSecretRef *SecretFileRef `json:"envSecretRef,omitempty"`
+
+	// ProfileConfig is the shared per-profile config object (inline).
+	ProfileConfig `json:",inline"`
+}
+
+// IsEnabled reports whether this profile's gateway should auto-start (default true).
+func (p *ProfileSpec) IsEnabled() bool {
+	return p.Enabled == nil || *p.Enabled
+}
+
 // MCPSpec configures the Model Context Protocol servers the agent connects to.
 // Each entry renders into config.yaml `mcp_servers:` keyed by name.
 type MCPSpec struct {
@@ -439,6 +547,7 @@ type MCPSpec struct {
 	// +optional
 	// +listType=map
 	// +listMapKey=name
+	// +kubebuilder:validation:MaxItems=100
 	Servers []MCPServerSpec `json:"servers,omitempty"`
 }
 

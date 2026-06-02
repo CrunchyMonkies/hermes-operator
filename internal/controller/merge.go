@@ -24,20 +24,64 @@ import (
 )
 
 // mergePreset deep-merges a HermesConfigPreset's defaults UNDER the agent spec
-// (the CR wins). Sections the preset covers (model/agent/compression/memory/
-// skills/packages/extraConfig) fill any unset spec fields. See spec §3.2.
+// (the CR wins). The preset's config sections (model/agent/compression/memory/
+// skills/extraConfig) fill any unset fields of spec.defaultProfile; preset.packages
+// fills pod-level spec.packages. Named profiles inherit the preset because they
+// resolve over defaultProfile (see resolveProfileConfig). See spec §3.2.
 func mergePreset(spec *hermesv1alpha1.HermesAgentSpec, preset *hermesv1alpha1.HermesConfigPresetSpec) error {
 	presetMap, err := toMap(preset)
 	if err != nil {
 		return err
 	}
-	specMap, err := toMap(spec)
+	// Pod-level packages merge under spec.packages, not defaultProfile.
+	var presetPackages any
+	if p, ok := presetMap["packages"]; ok {
+		presetPackages = p
+		delete(presetMap, "packages")
+	}
+
+	// Config sections merge under defaultProfile; the profile (overlay) wins.
+	dpMap, err := toMap(spec.DefaultProfile)
 	if err != nil {
 		return err
 	}
-	// spec (overlay) wins; preset (base) fills the gaps.
-	merged := deepMergeAny(presetMap, specMap)
-	return fromMap(merged, spec)
+	mergedDP := deepMergeAny(presetMap, dpMap)
+	if err := fromMap(mergedDP, &spec.DefaultProfile); err != nil {
+		return err
+	}
+
+	if pm, ok := presetPackages.(map[string]any); ok {
+		pkgMap, err := toMap(spec.Packages)
+		if err != nil {
+			return err
+		}
+		merged := deepMergeAny(pm, pkgMap)
+		if err := fromMap(merged, &spec.Packages); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// resolveProfileConfig overlays a named profile's config over the default profile
+// (profile wins; sections the profile leaves unset inherit defaultProfile), using
+// the same JSON deep-merge as the preset. Returns the fully-resolved config that
+// feeds the renderers.
+func resolveProfileConfig(base, profile hermesv1alpha1.ProfileConfig) (hermesv1alpha1.ProfileConfig, error) {
+	var out hermesv1alpha1.ProfileConfig
+	baseMap, err := toMap(base)
+	if err != nil {
+		return out, err
+	}
+	profMap, err := toMap(profile)
+	if err != nil {
+		return out, err
+	}
+	merged := deepMergeAny(baseMap, profMap)
+	if err := fromMap(merged, &out); err != nil {
+		return out, err
+	}
+	return out, nil
 }
 
 func toMap(v any) (map[string]any, error) {

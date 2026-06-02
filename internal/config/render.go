@@ -33,18 +33,19 @@ import (
 // The 23→24 bump is purely additive (new optional keys); no structural migration.
 const ConfigVersion = 24
 
-// RenderConfigYAML builds config.yaml from the typed spec, applies extraConfig
-// per precedence, and marshals to YAML. `${VAR}` strings pass through untouched
-// (Hermes interpolates them at runtime).
-func RenderConfigYAML(spec *hermesv1alpha1.HermesAgentSpec) ([]byte, error) {
-	root := renderTyped(spec)
+// RenderConfigYAML builds config.yaml for one profile from its ProfileConfig
+// (plus pod-level context from spec for the docker-terminal volume wiring),
+// applies extraConfig per precedence, and marshals to YAML. `${VAR}` strings pass
+// through untouched (Hermes interpolates them at runtime).
+func RenderConfigYAML(pc *hermesv1alpha1.ProfileConfig, spec *hermesv1alpha1.HermesAgentSpec) ([]byte, error) {
+	root := renderTyped(pc, spec)
 
-	if spec.ExtraConfig != nil && len(spec.ExtraConfig.Raw) > 0 {
+	if pc.ExtraConfig != nil && len(pc.ExtraConfig.Raw) > 0 {
 		extra := map[string]any{}
-		if err := json.Unmarshal(spec.ExtraConfig.Raw, &extra); err != nil {
+		if err := json.Unmarshal(pc.ExtraConfig.Raw, &extra); err != nil {
 			return nil, err
 		}
-		if spec.ExtraConfigPrecedence == "override" {
+		if pc.ExtraConfigPrecedence == "override" {
 			root = deepMerge(root, extra)
 		} else {
 			// merge: extraConfig fills gaps but typed fields win on conflict.
@@ -55,9 +56,10 @@ func RenderConfigYAML(spec *hermesv1alpha1.HermesAgentSpec) ([]byte, error) {
 	return yaml.Marshal(root)
 }
 
-// renderTyped converts the typed spec sections into a config.yaml map using the
-// exact upstream key names.
-func renderTyped(spec *hermesv1alpha1.HermesAgentSpec) map[string]any {
+// renderTyped converts a profile's typed config sections into a config.yaml map
+// using the exact upstream key names. pc supplies the per-profile config; spec
+// supplies pod-level context (kubeconfig, packages) for the docker terminal.
+func renderTyped(pc *hermesv1alpha1.ProfileConfig, spec *hermesv1alpha1.HermesAgentSpec) map[string]any {
 	root := map[string]any{
 		"_config_version": ConfigVersion,
 	}
@@ -66,8 +68,8 @@ func renderTyped(spec *hermesv1alpha1.HermesAgentSpec) map[string]any {
 	// default from it (so they aren't repeated); an explicit value still wins.
 	// Built-in providers carry their own endpoint, so nothing is derived.
 	model := map[string]any{}
-	baseURL, apiMode := spec.Model.BaseURL, spec.Model.APIMode
-	if sel := findProvider(spec.Model.Providers, spec.Model.Provider); sel != nil && sel.IsCustom() {
+	baseURL, apiMode := pc.Model.BaseURL, pc.Model.APIMode
+	if sel := findProvider(pc.Model.Providers, pc.Model.Provider); sel != nil && sel.IsCustom() {
 		if baseURL == "" {
 			baseURL = sel.BaseURL
 		}
@@ -75,56 +77,56 @@ func renderTyped(spec *hermesv1alpha1.HermesAgentSpec) map[string]any {
 			apiMode = sel.APIMode
 		}
 	}
-	putStr(model, "default", spec.Model.Default)
-	putStr(model, "provider", spec.Model.Provider)
+	putStr(model, "default", pc.Model.Default)
+	putStr(model, "provider", pc.Model.Provider)
 	putStr(model, "base_url", baseURL)
 	putStr(model, "api_mode", apiMode)
-	putNonZeroInt(model, "context_length", spec.Model.ContextLength)
-	putNonZeroInt(model, "max_tokens", spec.Model.MaxTokens)
+	putNonZeroInt(model, "context_length", pc.Model.ContextLength)
+	putNonZeroInt(model, "max_tokens", pc.Model.MaxTokens)
 	putSection(root, "model", model)
 
 	// custom_providers: (top-level) — CUSTOM endpoints only; built-ins aren't
 	// emitted here (hermes knows their URLs).
-	if cps := renderCustomProviders(spec.Model.Providers); len(cps) > 0 {
+	if cps := renderCustomProviders(pc.Model.Providers); len(cps) > 0 {
 		root["custom_providers"] = cps
 	}
 
 	// mcp_servers: (top-level) — keyed by server name.
-	putSection(root, "mcp_servers", renderMCPServers(spec.MCP.Servers))
+	putSection(root, "mcp_servers", renderMCPServers(pc.MCP.Servers))
 
 	// secrets: (top-level) — external secret managers (e.g. bitwarden).
-	putSection(root, "secrets", renderSecrets(spec.Secrets))
+	putSection(root, "secrets", renderSecrets(pc.Secrets))
 
 	// agent:
 	agent := map[string]any{}
-	putNonZeroInt(agent, "max_turns", int64(spec.Agent.MaxTurns))
-	putStr(agent, "reasoning_effort", spec.Agent.ReasoningEffort)
-	if len(spec.Agent.DisabledToolsets) > 0 {
-		agent["disabled_toolsets"] = spec.Agent.DisabledToolsets
+	putNonZeroInt(agent, "max_turns", int64(pc.Agent.MaxTurns))
+	putStr(agent, "reasoning_effort", pc.Agent.ReasoningEffort)
+	if len(pc.Agent.DisabledToolsets) > 0 {
+		agent["disabled_toolsets"] = pc.Agent.DisabledToolsets
 	}
 	putSection(root, "agent", agent)
 
 	// compression: (hot-reloadable)
 	comp := map[string]any{}
-	putBoolPtr(comp, "enabled", spec.Compression.Enabled)
-	putFloatStr(comp, "threshold", spec.Compression.Threshold)
-	putFloatStr(comp, "target_ratio", spec.Compression.TargetRatio)
-	putIntPtr(comp, "protect_last_n", spec.Compression.ProtectLastN)
-	putIntPtr(comp, "protect_first_n", spec.Compression.ProtectFirstN)
+	putBoolPtr(comp, "enabled", pc.Compression.Enabled)
+	putFloatStr(comp, "threshold", pc.Compression.Threshold)
+	putFloatStr(comp, "target_ratio", pc.Compression.TargetRatio)
+	putIntPtr(comp, "protect_last_n", pc.Compression.ProtectLastN)
+	putIntPtr(comp, "protect_first_n", pc.Compression.ProtectFirstN)
 	putSection(root, "compression", comp)
 
 	// memory:
 	mem := map[string]any{}
-	putBoolPtr(mem, "memory_enabled", spec.Memory.MemoryEnabled)
-	putBoolPtr(mem, "user_profile_enabled", spec.Memory.UserProfileEnabled)
+	putBoolPtr(mem, "memory_enabled", pc.Memory.MemoryEnabled)
+	putBoolPtr(mem, "user_profile_enabled", pc.Memory.UserProfileEnabled)
 	putSection(root, "memory", mem)
 
 	// terminal: (from runtime)
 	terminal := map[string]any{}
-	putStr(terminal, "backend", spec.Runtime.TerminalBackend)
-	putNonZeroInt(terminal, "timeout", int64(spec.Runtime.TerminalTimeout))
-	if spec.Runtime.TerminalBackend == "docker" {
-		terminal["docker_mount_cwd_to_workspace"] = spec.Runtime.Docker.MountCwdToWorkspace
+	putStr(terminal, "backend", pc.Runtime.TerminalBackend)
+	putNonZeroInt(terminal, "timeout", int64(pc.Runtime.TerminalTimeout))
+	if pc.Runtime.TerminalBackend == "docker" {
+		terminal["docker_mount_cwd_to_workspace"] = pc.Runtime.Docker.MountCwdToWorkspace
 		// Tools run in dind-spawned containers (a generic image) that inherit none
 		// of the agent's ~/.kube/config, SA token, or brew prefix. Everything that
 		// lives on the shared PVC is already mounted into the dind daemon at its
@@ -140,7 +142,7 @@ func renderTyped(spec *hermesv1alpha1.HermesAgentSpec) map[string]any {
 		// DOCKER_HOST. The docker CLI must also be present in the sandbox — add
 		// `docker` to packages.brew (mounted + on PATH below) or use a docker-enabled
 		// terminal.docker_image.
-		if spec.Runtime.Docker.SocketTransport == "tcp" {
+		if pc.Runtime.Docker.SocketTransport == "tcp" {
 			dockerEnv["DOCKER_HOST"] = "tcp://127.0.0.1:2375"
 			networkHost = true // reach the daemon's intra-pod tcp port
 		} else {
@@ -194,32 +196,32 @@ func renderTyped(spec *hermesv1alpha1.HermesAgentSpec) map[string]any {
 
 	// code_execution:
 	codeExec := map[string]any{}
-	putNonZeroInt(codeExec, "timeout", int64(spec.Runtime.CodeExecution.Timeout))
-	putNonZeroInt(codeExec, "max_tool_calls", int64(spec.Runtime.CodeExecution.MaxToolCalls))
+	putNonZeroInt(codeExec, "timeout", int64(pc.Runtime.CodeExecution.Timeout))
+	putNonZeroInt(codeExec, "max_tool_calls", int64(pc.Runtime.CodeExecution.MaxToolCalls))
 	putSection(root, "code_execution", codeExec)
 
 	// delegation:
 	deleg := map[string]any{}
-	putNonZeroInt(deleg, "max_iterations", int64(spec.Runtime.Delegation.MaxIterations))
-	putNonZeroInt(deleg, "max_concurrent_children", int64(spec.Runtime.Delegation.MaxConcurrentChildren))
+	putNonZeroInt(deleg, "max_iterations", int64(pc.Runtime.Delegation.MaxIterations))
+	putNonZeroInt(deleg, "max_concurrent_children", int64(pc.Runtime.Delegation.MaxConcurrentChildren))
 	putSection(root, "delegation", deleg)
 
 	// skills:
 	skills := map[string]any{}
-	if len(spec.Skills.Disabled) > 0 {
-		skills["disabled"] = sortedCopy(spec.Skills.Disabled)
+	if len(pc.Skills.Disabled) > 0 {
+		skills["disabled"] = sortedCopy(pc.Skills.Disabled)
 	}
-	if len(spec.Skills.PlatformDisabled) > 0 {
+	if len(pc.Skills.PlatformDisabled) > 0 {
 		pd := map[string]any{}
-		for platform, names := range spec.Skills.PlatformDisabled {
+		for platform, names := range pc.Skills.PlatformDisabled {
 			pd[platform] = sortedCopy(names)
 		}
 		skills["platform_disabled"] = pd
 	}
-	if len(spec.Skills.ExternalDirs) > 0 {
-		skills["external_dirs"] = spec.Skills.ExternalDirs
+	if len(pc.Skills.ExternalDirs) > 0 {
+		skills["external_dirs"] = pc.Skills.ExternalDirs
 	}
-	putNonZeroInt(skills, "creation_nudge_interval", int64(spec.Skills.CreationNudgeInterval))
+	putNonZeroInt(skills, "creation_nudge_interval", int64(pc.Skills.CreationNudgeInterval))
 	putSection(root, "skills", skills)
 
 	return root
@@ -349,9 +351,9 @@ func renderBitwarden(in *hermesv1alpha1.BitwardenSpec) map[string]any {
 	return bw
 }
 
-// RenderSoul returns the SOUL.md content (empty spec.soul yields no file).
-func RenderSoul(spec *hermesv1alpha1.HermesAgentSpec) string {
-	return spec.Soul
+// RenderSoul returns a profile's SOUL.md content (empty soul yields no file).
+func RenderSoul(pc *hermesv1alpha1.ProfileConfig) string {
+	return pc.Soul
 }
 
 // --- helpers ---

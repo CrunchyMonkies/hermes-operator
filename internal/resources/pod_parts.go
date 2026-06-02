@@ -56,7 +56,7 @@ func baseVolumes(a *hermesv1alpha1.HermesAgent) []corev1.Volume {
 		size := *a.Spec.ShmSize
 		shm.SizeLimit = &size
 	}
-	vols := make([]corev1.Volume, 0, 3+len(a.Spec.Skills.Custom))
+	vols := make([]corev1.Volume, 0, 3+len(a.Spec.DefaultProfile.Skills.Custom))
 	vols = append(vols,
 		corev1.Volume{
 			Name: VolShared,
@@ -75,6 +75,7 @@ func baseVolumes(a *hermesv1alpha1.HermesAgent) []corev1.Volume {
 		corev1.Volume{Name: VolShm, VolumeSource: corev1.VolumeSource{EmptyDir: &shm}},
 	)
 	vols = append(vols, skillSourceVolumes(a)...)
+	vols = append(vols, profileEnvVolumes(a)...)
 	return vols
 }
 
@@ -84,8 +85,8 @@ func skillVolumeName(skill string) string { return "skill-" + skill }
 // skillSourceVolumes mounts each custom skill's source (inline ConfigMap, or a
 // referenced ConfigMap/Secret) so the reloader can copy it onto the PVC.
 func skillSourceVolumes(a *hermesv1alpha1.HermesAgent) []corev1.Volume {
-	out := make([]corev1.Volume, 0, len(a.Spec.Skills.Custom))
-	for _, s := range a.Spec.Skills.Custom {
+	out := make([]corev1.Volume, 0, len(a.Spec.DefaultProfile.Skills.Custom))
+	for _, s := range a.Spec.DefaultProfile.Skills.Custom {
 		vol := corev1.Volume{Name: skillVolumeName(s.Name)}
 		switch {
 		case s.Inline != "":
@@ -114,8 +115,8 @@ func skillSourceVolumes(a *hermesv1alpha1.HermesAgent) []corev1.Volume {
 
 // skillSourceMounts mounts the skill source volumes into the reloader container.
 func skillSourceMounts(a *hermesv1alpha1.HermesAgent) []corev1.VolumeMount {
-	out := make([]corev1.VolumeMount, 0, len(a.Spec.Skills.Custom))
-	for _, s := range a.Spec.Skills.Custom {
+	out := make([]corev1.VolumeMount, 0, len(a.Spec.DefaultProfile.Skills.Custom))
+	for _, s := range a.Spec.DefaultProfile.Skills.Custom {
 		out = append(out, corev1.VolumeMount{
 			Name:      skillVolumeName(s.Name),
 			MountPath: SkillSrcDir + "/" + s.Name,
@@ -178,21 +179,16 @@ func hermesEnv(a *hermesv1alpha1.HermesAgent) []corev1.EnvVar {
 	// available — that URL is what flips the platform from polling to webhook.
 	// The verification secret (e.g. TELEGRAM_WEBHOOK_SECRET) is NOT set here; it
 	// must be supplied via the channel secretRef (it arrives via envFrom).
-	whPorts := resolvedWebhookPorts(a)
-	for i, ch := range a.Spec.Channels {
-		wp, ok := webhookPlatforms[ch.Type]
+	// These apply to the DEFAULT profile (the agent container runs it). Named
+	// profiles get their webhook PORT/URL via their own .env (see configInitCommand).
+	for _, ep := range profileWebhookEndpoints(a, "") {
+		wp, ok := webhookPlatforms[ep.channelType]
 		if !ok {
 			continue
 		}
-		port := whPorts[i]
-		if port <= 0 {
-			continue
-		}
-		env = append(env, corev1.EnvVar{Name: wp.portEnv, Value: strconv.Itoa(int(port))})
-		if channelWantsWebhook(ch) {
-			if host := channelEffectiveHost(a, ch); host != "" {
-				env = append(env, corev1.EnvVar{Name: wp.urlEnv, Value: webhookURL(host, ch.Type)})
-			}
+		env = append(env, corev1.EnvVar{Name: wp.portEnv, Value: strconv.Itoa(int(ep.port))})
+		if ep.wantsURL {
+			env = append(env, corev1.EnvVar{Name: wp.urlEnv, Value: ep.url()})
 		}
 	}
 
@@ -208,13 +204,13 @@ func hermesEnv(a *hermesv1alpha1.HermesAgent) []corev1.EnvVar {
 		})
 	}
 
-	if url := a.Spec.Searxng.URL; url != "" {
+	if url := a.Spec.DefaultProfile.Searxng.URL; url != "" {
 		env = append(env, corev1.EnvVar{Name: "SEARXNG_URL", Value: url})
 	}
-	if a.Spec.Honcho.BaseURL != "" {
-		env = append(env, corev1.EnvVar{Name: "HONCHO_BASE_URL", Value: a.Spec.Honcho.BaseURL})
+	if a.Spec.DefaultProfile.Honcho.BaseURL != "" {
+		env = append(env, corev1.EnvVar{Name: "HONCHO_BASE_URL", Value: a.Spec.DefaultProfile.Honcho.BaseURL})
 	}
-	if ref := a.Spec.Honcho.APIKeySecretRef; ref != nil {
+	if ref := a.Spec.DefaultProfile.Honcho.APIKeySecretRef; ref != nil {
 		env = append(env, corev1.EnvVar{
 			Name: "HONCHO_API_KEY",
 			ValueFrom: &corev1.EnvVarSource{
@@ -229,7 +225,7 @@ func hermesEnv(a *hermesv1alpha1.HermesAgent) []corev1.EnvVar {
 	// resolved env var (built-in's known var, explicit keyEnv, or a derived name for
 	// custom endpoints). All are injected so hermes /model switching works. Providers
 	// without a keySecretRef or a resolvable env var (e.g. OAuth) are skipped.
-	for _, p := range a.Spec.Model.Providers {
+	for _, p := range a.Spec.DefaultProfile.Model.Providers {
 		ref := p.KeySecretRef
 		envName := p.KeyEnvVar()
 		if ref == nil || envName == "" {
@@ -248,7 +244,7 @@ func hermesEnv(a *hermesv1alpha1.HermesAgent) []corev1.EnvVar {
 
 	// MCP server credentials: each server's secretEnv binds a Secret key to an env
 	// var the agent references via ${name} in headers/env (see MCPServerSpec).
-	for _, s := range a.Spec.MCP.Servers {
+	for _, s := range a.Spec.DefaultProfile.MCP.Servers {
 		for _, se := range s.SecretEnv {
 			if se.Name == "" {
 				continue
@@ -267,7 +263,7 @@ func hermesEnv(a *hermesv1alpha1.HermesAgent) []corev1.EnvVar {
 
 	// Bitwarden: inject the machine-account access token under its configured env
 	// var (default BWS_ACCESS_TOKEN) so hermes' bws sync can authenticate.
-	if bw := a.Spec.Secrets.Bitwarden; bw != nil && bw.AccessTokenSecretRef != nil {
+	if bw := a.Spec.DefaultProfile.Secrets.Bitwarden; bw != nil && bw.AccessTokenSecretRef != nil {
 		name := bw.AccessTokenEnv
 		if name == "" {
 			name = "BWS_ACCESS_TOKEN"
@@ -289,17 +285,25 @@ func hermesEnv(a *hermesv1alpha1.HermesAgent) []corev1.EnvVar {
 		env = append(env, corev1.EnvVar{Name: "PYTHONPATH", Value: PipSitePackages})
 	}
 
+	// The default profile runs at the image's default $HERMES_HOME (/opt/data) via
+	// the main container's `gateway run`. Named profiles (spec.profiles) are
+	// independent gateways under profiles/<name>/, discovered and auto-started
+	// in-pod by the upstream image — they don't touch the agent container's
+	// HERMES_HOME.
+
 	// User-provided env appended last (can override operator defaults by name
 	// only if duplicated; Kubernetes keeps the last occurrence).
 	env = append(env, a.Spec.Env...)
 	return env
 }
 
-// hermesEnvFrom collects spec.envFrom plus each channel's secretRef.
+// hermesEnvFrom collects spec.envFrom plus each default-profile channel's
+// secretRef (the agent container runs the default profile; named-profile channel
+// creds ride in via each profile's .env).
 func hermesEnvFrom(a *hermesv1alpha1.HermesAgent) []corev1.EnvFromSource {
 	out := append([]corev1.EnvFromSource(nil), a.Spec.EnvFrom...)
 	seen := map[string]bool{}
-	for _, ch := range a.Spec.Channels {
+	for _, ch := range a.Spec.DefaultProfile.Channels {
 		if ch.SecretRef != nil && ch.SecretRef.Name != "" && !seen[ch.SecretRef.Name] {
 			seen[ch.SecretRef.Name] = true
 			out = append(out, corev1.EnvFromSource{
@@ -372,30 +376,81 @@ func pick(v, def int32) int32 {
 	return def
 }
 
-// dockerBackend reports whether the agent runs tools in a Docker-in-Docker
-// sidecar (terminal.backend == docker, §11.2).
+// dockerBackend reports whether ANY profile runs tools in a Docker-in-Docker
+// sidecar (terminal.backend == docker, §11.2). One dind sidecar is shared by the
+// pod; its daemon config comes from the default profile.
 func dockerBackend(a *hermesv1alpha1.HermesAgent) bool {
-	return a.Spec.Runtime.TerminalBackend == backendDocker
+	for _, pc := range a.Spec.AllProfileConfigs() {
+		if pc.Runtime.TerminalBackend == backendDocker {
+			return true
+		}
+	}
+	return false
 }
 
 // dockerHost is the DOCKER_HOST the agent uses to reach the dind daemon, and the
 // address the daemon listens on. unix (default) shares an emptyDir socket; tcp
 // uses intra-pod localhost.
 func dockerHost(a *hermesv1alpha1.HermesAgent) string {
-	if a.Spec.Runtime.Docker.SocketTransport == "tcp" {
+	if a.Spec.DefaultProfile.Runtime.Docker.SocketTransport == "tcp" {
 		return "tcp://127.0.0.1:2375"
 	}
 	return "unix://" + DindSocketDir + "/docker.sock"
 }
 
+// profileEnvVolumes mounts each named profile's .env Secret (envSecretRef) so the
+// config-init container can copy it onto the profile's home as profiles/<name>/.env
+// (the upstream image loads it with override=True for isolated bot tokens). The
+// Secret's chosen key is projected as the file ".env".
+func profileEnvVolumes(a *hermesv1alpha1.HermesAgent) []corev1.Volume {
+	out := make([]corev1.Volume, 0, len(a.Spec.Profiles))
+	for _, p := range a.Spec.Profiles {
+		ref := p.EnvSecretRef
+		if ref == nil || ref.Name == "" {
+			continue
+		}
+		key := ref.Key
+		if key == "" {
+			key = ".env"
+		}
+		out = append(out, corev1.Volume{
+			Name: ProfileEnvVolumeName(p.Name),
+			VolumeSource: corev1.VolumeSource{
+				Secret: &corev1.SecretVolumeSource{
+					SecretName: ref.Name,
+					Items:      []corev1.KeyToPath{{Key: key, Path: ".env"}},
+				},
+			},
+		})
+	}
+	return out
+}
+
+// profileEnvMounts mounts the profile .env Secret volumes into the config-init
+// container at <ProfileEnvSrcDir>/<name>/.env (read-only).
+func profileEnvMounts(a *hermesv1alpha1.HermesAgent) []corev1.VolumeMount {
+	out := make([]corev1.VolumeMount, 0, len(a.Spec.Profiles))
+	for _, p := range a.Spec.Profiles {
+		if p.EnvSecretRef == nil || p.EnvSecretRef.Name == "" {
+			continue
+		}
+		out = append(out, corev1.VolumeMount{
+			Name:      ProfileEnvVolumeName(p.Name),
+			MountPath: ProfileEnvSrcDir + "/" + p.Name,
+			ReadOnly:  true,
+		})
+	}
+	return out
+}
+
 // dindImage resolves the dind sidecar image, swapping to the rootless variant
 // when rootless is requested and the image is left at the default.
 func dindImage(a *hermesv1alpha1.HermesAgent) string {
-	img := a.Spec.Runtime.Docker.Image
+	img := a.Spec.DefaultProfile.Runtime.Docker.Image
 	if img == "" {
 		img = DefaultDindImage
 	}
-	if a.Spec.Runtime.Docker.Rootless && img == DefaultDindImage {
+	if a.Spec.DefaultProfile.Runtime.Docker.Rootless && img == DefaultDindImage {
 		img = DefaultDindRootlessImage
 	}
 	return img
@@ -404,7 +459,7 @@ func dindImage(a *hermesv1alpha1.HermesAgent) string {
 // dindSocketVolume is the emptyDir carrying the daemon's unix socket, shared
 // between the agent and dind containers. Returns nil for the tcp transport.
 func dindSocketVolume(a *hermesv1alpha1.HermesAgent) *corev1.Volume {
-	if a.Spec.Runtime.Docker.SocketTransport == socketTransportTCP {
+	if a.Spec.DefaultProfile.Runtime.Docker.SocketTransport == socketTransportTCP {
 		return nil
 	}
 	return &corev1.Volume{
@@ -415,7 +470,7 @@ func dindSocketVolume(a *hermesv1alpha1.HermesAgent) *corev1.Volume {
 
 // dindSocketMount mounts the shared socket emptyDir (unix transport only).
 func dindSocketMount(a *hermesv1alpha1.HermesAgent) *corev1.VolumeMount {
-	if a.Spec.Runtime.Docker.SocketTransport == socketTransportTCP {
+	if a.Spec.DefaultProfile.Runtime.Docker.SocketTransport == socketTransportTCP {
 		return nil
 	}
 	return &corev1.VolumeMount{Name: VolDindSocket, MountPath: DindSocketDir}
@@ -445,7 +500,7 @@ func dindContainer(a *hermesv1alpha1.HermesAgent) corev1.Container {
 	// group) so a NON-root agent — and the tool sandboxes that bind-mount it — can
 	// reach the daemon. Without this the socket is root:docker(0660) and a
 	// runAsRoot:false agent gets "permission denied". (tcp transport has no socket.)
-	if a.Spec.Runtime.Docker.SocketTransport != socketTransportTCP {
+	if a.Spec.DefaultProfile.Runtime.Docker.SocketTransport != socketTransportTCP {
 		args = append(args, "--group="+strconv.FormatInt(a.Spec.HermesGID, 10))
 	}
 
@@ -458,24 +513,26 @@ func dindContainer(a *hermesv1alpha1.HermesAgent) corev1.Container {
 			{Name: "DOCKER_TLS_CERTDIR", Value: ""},
 		},
 		VolumeMounts: mounts,
-		Resources:    a.Spec.Runtime.Docker.Resources,
+		Resources:    a.Spec.DefaultProfile.Runtime.Docker.Resources,
 	}
 	// Standard DinD needs privileged; the rootless variant must not set it.
-	if !a.Spec.Runtime.Docker.Rootless {
+	if !a.Spec.DefaultProfile.Runtime.Docker.Rootless {
 		c.SecurityContext = &corev1.SecurityContext{Privileged: ptr.To(true)}
 	}
 	return c
 }
 
-// honchoInUse reports whether the agent uses Honcho (baseURL or API key set).
-func honchoInUse(a *hermesv1alpha1.HermesAgent) bool {
-	return a.Spec.Honcho.BaseURL != "" || a.Spec.Honcho.APIKeySecretRef != nil
-}
-
 // honchoInstallEnabled reports whether honcho-ai should be installed (honcho in
-// use and installPackage not disabled).
+// use by some profile that has not disabled installPackage). The package install
+// is pod-level (shared PVC).
 func honchoInstallEnabled(a *hermesv1alpha1.HermesAgent) bool {
-	return honchoInUse(a) && (a.Spec.Honcho.InstallPackage == nil || *a.Spec.Honcho.InstallPackage)
+	for _, pc := range a.Spec.AllProfileConfigs() {
+		used := pc.Honcho.BaseURL != "" || pc.Honcho.APIKeySecretRef != nil
+		if used && (pc.Honcho.InstallPackage == nil || *pc.Honcho.InstallPackage) {
+			return true
+		}
+	}
+	return false
 }
 
 // pipPackages is the de-duplicated set of pip packages installed into the shared
@@ -499,13 +556,16 @@ func pipPackages(a *hermesv1alpha1.HermesAgent) []string {
 	if honchoInstallEnabled(a) {
 		add(HonchoPackageSpec)
 	}
-	for _, ch := range a.Spec.Channels {
-		if ch.InstallDeps == nil || *ch.InstallDeps {
-			add(channelPipDeps[ch.Type]...)
+	// Union channel + terminal-backend deps across every profile (one shared PVC).
+	for _, pc := range a.Spec.AllProfileConfigs() {
+		for _, ch := range pc.Channels {
+			if ch.InstallDeps == nil || *ch.InstallDeps {
+				add(channelPipDeps[ch.Type]...)
+			}
 		}
-	}
-	if a.Spec.Runtime.InstallDeps == nil || *a.Spec.Runtime.InstallDeps {
-		add(backendPipDeps[a.Spec.Runtime.TerminalBackend]...)
+		if pc.Runtime.InstallDeps == nil || *pc.Runtime.InstallDeps {
+			add(backendPipDeps[pc.Runtime.TerminalBackend]...)
+		}
 	}
 	return out
 }
@@ -550,10 +610,16 @@ pip install --no-cache-dir --target "$TARGET" %s
 }
 
 // singularityInstallEnabled reports whether the operator should install Apptainer
-// (terminalBackend=singularity and runtime.installDeps not disabled).
+// (ANY profile uses terminalBackend=singularity with runtime.installDeps not
+// disabled). The install is pod-level (shared PVC).
 func singularityInstallEnabled(a *hermesv1alpha1.HermesAgent) bool {
-	return a.Spec.Runtime.TerminalBackend == backendSingularity &&
-		(a.Spec.Runtime.InstallDeps == nil || *a.Spec.Runtime.InstallDeps)
+	for _, pc := range a.Spec.AllProfileConfigs() {
+		if pc.Runtime.TerminalBackend == backendSingularity &&
+			(pc.Runtime.InstallDeps == nil || *pc.Runtime.InstallDeps) {
+			return true
+		}
+	}
+	return false
 }
 
 // apptainerInitContainer installs Apptainer (for the singularity backend) onto
@@ -562,7 +628,7 @@ func singularityInstallEnabled(a *hermesv1alpha1.HermesAgent) bool {
 // ~/.local/bin (already on PATH). Running containers still needs the node to
 // allow unprivileged user namespaces.
 func apptainerInitContainer(a *hermesv1alpha1.HermesAgent) corev1.Container {
-	img := a.Spec.Runtime.Singularity.InstallImage
+	img := a.Spec.DefaultProfile.Runtime.Singularity.InstallImage
 	if img == "" {
 		img = DefaultSingularityInstallImage
 	}
@@ -591,12 +657,25 @@ ln -sf "$PREFIX/bin/apptainer" %[3]s/singularity
 	}
 }
 
+// appendEnvLine appends a single KEY=VALUE line to a profile's .env (creating it
+// if absent) and re-asserts ownership/perms. VALUE is operator-computed and
+// non-secret (webhook port/url).
+func appendEnvLine(profileHome, uidgid, key, value string) string {
+	return fmt.Sprintf(`printf '%%s\n' '%[2]s=%[3]s' >> %[1]s/.env
+chown %[4]s %[1]s/.env 2>/dev/null || true
+chmod 600 %[1]s/.env 2>/dev/null || true
+`, profileHome, key, value, uidgid)
+}
+
 // configInitCommand copies the operator-rendered config files onto the writable
 // PVC at boot (avoids read-only subPath ConfigMap mounts and the chmod caveat,
 // spec §4.3 / open question #2). Re-applied every start ⇒ operator-owned config.
 func configInitCommand(a *hermesv1alpha1.HermesAgent) []string {
 	uidgid := fmt.Sprintf("%d:%d", a.Spec.HermesUID, a.Spec.HermesGID)
-	script := fmt.Sprintf(`set -e
+	var b strings.Builder
+	// config.yaml/SOUL.md for the default profile land in the base home.
+	fmt.Fprintf(&b, `set -e
+mkdir -p %[2]s
 for f in config.yaml SOUL.md; do
   if [ -f %[1]s/$f ]; then
     cp %[1]s/$f %[2]s/$f
@@ -605,15 +684,52 @@ for f in config.yaml SOUL.md; do
 done
 chmod 640 %[2]s/config.yaml 2>/dev/null || true
 `, ConfigSrcDir, HermesHome, uidgid)
+
+	// Named profiles: render each as an independent agent home under profiles/<name>.
+	// SOUL.md is the discovery marker; gateway_state.json=running auto-starts the
+	// gateway; .env (when provided) isolates this profile's bot tokens. This runs in
+	// the config-init init container — before the main container's s6/container_boot
+	// reads gateway_state.json — so enabled profiles auto-start on first boot.
+	for _, p := range a.Spec.Profiles {
+		pd := ProfileHome(p.Name)
+		fmt.Fprintf(&b, `mkdir -p %[2]s
+if [ -f %[1]s/%[4]s ]; then cp %[1]s/%[4]s %[2]s/config.yaml; chown %[3]s %[2]s/config.yaml 2>/dev/null || true; chmod 640 %[2]s/config.yaml 2>/dev/null || true; fi
+if [ -f %[1]s/%[5]s ]; then cp %[1]s/%[5]s %[2]s/SOUL.md; chown %[3]s %[2]s/SOUL.md 2>/dev/null || true; fi
+`, ConfigSrcDir, pd, uidgid, ProfileConfigKey(p.Name), ProfileSoulKey(p.Name))
+		if p.EnvSecretRef != nil && p.EnvSecretRef.Name != "" {
+			src := ProfileEnvSrcDir + "/" + p.Name + "/.env"
+			fmt.Fprintf(&b, `if [ -f %[1]s ]; then cp %[1]s %[2]s/.env; chown %[3]s %[2]s/.env 2>/dev/null || true; chmod 600 %[2]s/.env 2>/dev/null || true; fi
+`, src, pd, uidgid)
+		}
+		// Append operator-computed (non-secret) webhook PORT/URL for this profile's
+		// webhook-capable channels to its .env (the bot token and *_WEBHOOK_SECRET
+		// must come from the user's envSecretRef). hermes loads .env with override.
+		for _, ep := range profileWebhookEndpoints(a, p.Name) {
+			wp, ok := webhookPlatforms[ep.channelType]
+			if !ok {
+				continue
+			}
+			b.WriteString(appendEnvLine(pd, uidgid, wp.portEnv, strconv.Itoa(int(ep.port))))
+			if ep.wantsURL {
+				b.WriteString(appendEnvLine(pd, uidgid, wp.urlEnv, ep.url()))
+			}
+		}
+		if p.IsEnabled() {
+			fmt.Fprintf(&b, `printf '%%s' '%[3]s' > %[1]s/%[4]s
+chown %[2]s %[1]s/%[4]s 2>/dev/null || true
+`, pd, uidgid, GatewayStateRunning, GatewayStateFile)
+		}
+	}
+
 	if a.Spec.Kubeconfig.Enabled {
 		// Write ~/.kube/config (HOME=/opt/data) owned by the hermes user, mode
 		// 0600, with a writable 0700 .kube dir so kubectl's cache works.
-		script += fmt.Sprintf(`mkdir -p %[2]s/.kube
+		fmt.Fprintf(&b, `mkdir -p %[2]s/.kube
 cp %[1]s/%[4]s %[2]s/.kube/config
 chown %[3]s %[2]s/.kube %[2]s/.kube/config 2>/dev/null || true
 chmod 700 %[2]s/.kube 2>/dev/null || true
 chmod 600 %[2]s/.kube/config 2>/dev/null || true
 `, ConfigSrcDir, HermesHome, uidgid, KubeConfigKey)
 	}
-	return []string{"sh", "-c", script}
+	return []string{"sh", "-c", b.String()}
 }

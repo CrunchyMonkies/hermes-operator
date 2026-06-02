@@ -36,7 +36,7 @@ func envByName(a *hermesv1alpha1.HermesAgent, name string) (string, bool, bool) 
 
 func TestProviderKeyInjection(t *testing.T) {
 	a := baseAgent()
-	a.Spec.Model.Providers = []hermesv1alpha1.ProviderSpec{
+	a.Spec.DefaultProfile.Model.Providers = []hermesv1alpha1.ProviderSpec{
 		{Name: "claude", KeySecretRef: &hermesv1alpha1.SecretKeyRef{Name: "llm-keys", Key: "anthropic"}},
 		{Name: "llm", BaseURL: "https://llm/v1", KeySecretRef: &hermesv1alpha1.SecretKeyRef{Name: "llm-keys", Key: "llm"}},
 		{Name: "nous"}, // OAuth, no keySecretRef -> nothing injected
@@ -53,7 +53,7 @@ func TestProviderKeyInjection(t *testing.T) {
 
 func TestMCPSecretEnvInjection(t *testing.T) {
 	a := baseAgent()
-	a.Spec.MCP.Servers = []hermesv1alpha1.MCPServerSpec{
+	a.Spec.DefaultProfile.MCP.Servers = []hermesv1alpha1.MCPServerSpec{
 		{
 			Name: "remote",
 			URL:  "https://mcp.example.com/mcp",
@@ -82,7 +82,7 @@ func TestMCPSecretEnvInjection(t *testing.T) {
 
 func bitwardenAgent() *hermesv1alpha1.HermesAgent {
 	a := baseAgent()
-	a.Spec.Secrets.Bitwarden = &hermesv1alpha1.BitwardenSpec{
+	a.Spec.DefaultProfile.Secrets.Bitwarden = &hermesv1alpha1.BitwardenSpec{
 		Enabled:              ptrBool(true),
 		AccessTokenSecretRef: &hermesv1alpha1.SecretKeyRef{Name: "bw-creds", Key: "token"},
 	}
@@ -109,7 +109,7 @@ func TestBitwardenAccessTokenInjection(t *testing.T) {
 
 func TestBitwardenAccessTokenCustomEnv(t *testing.T) {
 	a := bitwardenAgent()
-	a.Spec.Secrets.Bitwarden.AccessTokenEnv = "BW_TOKEN"
+	a.Spec.DefaultProfile.Secrets.Bitwarden.AccessTokenEnv = "BW_TOKEN"
 
 	if _, fromSecret, ok := envByName(a, "BW_TOKEN"); !ok || !fromSecret {
 		t.Errorf("custom BW_TOKEN should be injected from a secretKeyRef (ok=%v fromSecret=%v)", ok, fromSecret)
@@ -127,9 +127,9 @@ func TestBitwardenNoInjectionWhenAbsent(t *testing.T) {
 
 func TestSearxngAndHonchoRenderEnv(t *testing.T) {
 	a := baseAgent()
-	a.Spec.Searxng.URL = "https://searxng.example/"
-	a.Spec.Honcho.BaseURL = "http://honcho.llm:8000"
-	a.Spec.Honcho.APIKeySecretRef = &hermesv1alpha1.SecretKeyRef{Name: "h", Key: "api-key"}
+	a.Spec.DefaultProfile.Searxng.URL = "https://searxng.example/"
+	a.Spec.DefaultProfile.Honcho.BaseURL = "http://honcho.llm:8000"
+	a.Spec.DefaultProfile.Honcho.APIKeySecretRef = &hermesv1alpha1.SecretKeyRef{Name: "h", Key: "api-key"}
 
 	if v, _, ok := envByName(a, "SEARXNG_URL"); !ok || v != "https://searxng.example/" {
 		t.Errorf("SEARXNG_URL = %q ok=%v", v, ok)
@@ -153,7 +153,7 @@ func TestSearxngHonchoOmittedWhenUnset(t *testing.T) {
 
 func TestHonchoPipInstallInitContainer(t *testing.T) {
 	a := baseAgent()
-	a.Spec.Honcho.BaseURL = "http://honcho.llm:8000"
+	a.Spec.DefaultProfile.Honcho.BaseURL = "http://honcho.llm:8000"
 
 	dep, err := Deployment(a, "h", "")
 	if err != nil {
@@ -181,9 +181,9 @@ func TestHonchoPipInstallInitContainer(t *testing.T) {
 func TestHonchoInstallSkipped(t *testing.T) {
 	// installPackage=false -> no init container even though honcho is in use.
 	off := baseAgent()
-	off.Spec.Honcho.BaseURL = "http://h:8000"
+	off.Spec.DefaultProfile.Honcho.BaseURL = "http://h:8000"
 	disabled := false
-	off.Spec.Honcho.InstallPackage = &disabled
+	off.Spec.DefaultProfile.Honcho.InstallPackage = &disabled
 	dep, _ := Deployment(off, "h", "")
 	if findContainer(dep.Spec.Template.Spec.InitContainers, InitPipInstall) != nil {
 		t.Error("install-honcho should be absent when installPackage=false")
@@ -217,7 +217,7 @@ func TestPipPackagesInitContainer(t *testing.T) {
 
 	// honcho + packages.pip compose into a single pip-install init.
 	b := baseAgent()
-	b.Spec.Honcho.BaseURL = "http://h:8000"
+	b.Spec.DefaultProfile.Honcho.BaseURL = "http://h:8000"
 	b.Spec.Packages.Pip = []string{"ruff"}
 	dep2, _ := Deployment(b, "h", "")
 	inits := dep2.Spec.Template.Spec.InitContainers
@@ -255,10 +255,10 @@ func pipScript(t *testing.T, a *hermesv1alpha1.HermesAgent) string {
 
 func TestChannelAndBackendPipDeps(t *testing.T) {
 	a := baseAgent()
-	a.Spec.Channels = []hermesv1alpha1.ChannelSpec{
+	a.Spec.DefaultProfile.Channels = []hermesv1alpha1.ChannelSpec{
 		{Type: "telegram"}, {Type: "discord"}, {Type: "teams"}, // teams has no deps
 	}
-	a.Spec.Runtime.TerminalBackend = "modal"
+	a.Spec.DefaultProfile.Runtime.TerminalBackend = "modal"
 	s := pipScript(t, a)
 	for _, want := range []string{
 		"python-telegram-bot[webhooks]==22.6",
@@ -274,9 +274,9 @@ func TestChannelAndBackendPipDeps(t *testing.T) {
 func TestInstallDepsTogglesOff(t *testing.T) {
 	off := false
 	a := baseAgent()
-	a.Spec.Channels = []hermesv1alpha1.ChannelSpec{{Type: "slack", InstallDeps: &off}}
-	a.Spec.Runtime.TerminalBackend = "daytona"
-	a.Spec.Runtime.InstallDeps = &off
+	a.Spec.DefaultProfile.Channels = []hermesv1alpha1.ChannelSpec{{Type: "slack", InstallDeps: &off}}
+	a.Spec.DefaultProfile.Runtime.TerminalBackend = "daytona"
+	a.Spec.DefaultProfile.Runtime.InstallDeps = &off
 	dep, _ := Deployment(a, "h", "")
 	if findContainer(dep.Spec.Template.Spec.InitContainers, InitPipInstall) != nil {
 		t.Error("pip-install init should be absent when installDeps are off and nothing else needs installing")
@@ -286,7 +286,7 @@ func TestInstallDepsTogglesOff(t *testing.T) {
 func TestPipDepsDeduped(t *testing.T) {
 	// slack pulls aiohttp==3.13.4; an explicit packages.pip entry for it must not duplicate.
 	a := baseAgent()
-	a.Spec.Channels = []hermesv1alpha1.ChannelSpec{{Type: "slack"}}
+	a.Spec.DefaultProfile.Channels = []hermesv1alpha1.ChannelSpec{{Type: "slack"}}
 	a.Spec.Packages.Pip = []string{"aiohttp==3.13.4"}
 	s := pipScript(t, a)
 	if n := strings.Count(s, "aiohttp==3.13.4"); n != 1 {
@@ -296,7 +296,7 @@ func TestPipDepsDeduped(t *testing.T) {
 
 func TestSingularityApptainerInstall(t *testing.T) {
 	a := baseAgent()
-	a.Spec.Runtime.TerminalBackend = "singularity"
+	a.Spec.DefaultProfile.Runtime.TerminalBackend = "singularity"
 	dep, err := Deployment(a, "h", "")
 	if err != nil {
 		t.Fatalf("Deployment: %v", err)
@@ -321,8 +321,8 @@ func TestSingularityApptainerInstall(t *testing.T) {
 	// installDeps=false -> no apptainer init.
 	off := false
 	b := baseAgent()
-	b.Spec.Runtime.TerminalBackend = "singularity"
-	b.Spec.Runtime.InstallDeps = &off
+	b.Spec.DefaultProfile.Runtime.TerminalBackend = "singularity"
+	b.Spec.DefaultProfile.Runtime.InstallDeps = &off
 	dep2, _ := Deployment(b, "h", "")
 	if findContainer(dep2.Spec.Template.Spec.InitContainers, InitApptainer) != nil {
 		t.Error("install-apptainer should be absent when installDeps=false")
@@ -330,7 +330,7 @@ func TestSingularityApptainerInstall(t *testing.T) {
 
 	// non-singularity backend -> no apptainer init.
 	c := baseAgent()
-	c.Spec.Runtime.TerminalBackend = "docker"
+	c.Spec.DefaultProfile.Runtime.TerminalBackend = "docker"
 	dep3, _ := Deployment(c, "h", "")
 	if findContainer(dep3.Spec.Template.Spec.InitContainers, InitApptainer) != nil {
 		t.Error("install-apptainer should be absent for a non-singularity backend")

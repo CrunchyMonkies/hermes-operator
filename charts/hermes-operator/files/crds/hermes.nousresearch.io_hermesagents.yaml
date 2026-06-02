@@ -59,30 +59,6 @@ spec:
               HermesAgentSpec defines the desired state of a single Hermes gateway. One CR
               renders to one Deployment(Recreate, replicas≤1) + one shared PVC + ConfigMaps
             properties:
-              agent:
-                description: AgentSpec renders into config.yaml `agent:`.
-                properties:
-                  disabledToolsets:
-                    description: disabledToolsets lists platform toolsets to disable.
-                      -> agent.disabled_toolsets
-                    items:
-                      type: string
-                    type: array
-                  maxTurns:
-                    description: maxTurns is the max tool-calling iterations. -> agent.max_turns
-                    format: int32
-                    type: integer
-                  reasoningEffort:
-                    description: reasoningEffort -> agent.reasoning_effort
-                    enum:
-                    - xhigh
-                    - high
-                    - medium
-                    - low
-                    - minimal
-                    - none
-                    type: string
-                type: object
               apiServer:
                 description: APIServerSpec controls the OpenAI-compatible HTTP API
                   (port 8642).
@@ -210,130 +186,6 @@ spec:
                 - key
                 - name
                 type: object
-              channels:
-                items:
-                  description: |-
-                    ChannelSpec binds one messaging platform. See specification §3.3 for the
-                    per-platform env surface (provided via secretRef / envFrom).
-                  properties:
-                    enabled:
-                      default: true
-                      type: boolean
-                    ingress:
-                      description: ingress is only meaningful when webhookPort > 0.
-                      properties:
-                        annotations:
-                          additionalProperties:
-                            type: string
-                          description: |-
-                            annotations are merged verbatim onto the Ingress object (nginx, Traefik,
-                            cert-manager, external-dns, auth, rate-limit, body-size, …).
-                          type: object
-                        className:
-                          description: className maps to spec.ingressClassName on
-                            the Ingress.
-                          type: string
-                        enabled:
-                          default: false
-                          description: enabled toggles rendering of an Ingress for
-                            this surface.
-                          type: boolean
-                        host:
-                          description: host is the Ingress host. Required when enabled.
-                          type: string
-                        path:
-                          default: /
-                          description: path is the HTTP path to route to this surface.
-                          type: string
-                        pathType:
-                          default: Prefix
-                          description: pathType is the Kubernetes Ingress path matching
-                            mode.
-                          enum:
-                          - Exact
-                          - Prefix
-                          - ImplementationSpecific
-                          type: string
-                        tls:
-                          description: |-
-                            tls lists TLS blocks rendered onto the Ingress. secretName may reference a
-                            Secret that cert-manager creates later (existence not required at admission).
-                          items:
-                            description: IngressTLS mirrors networkingv1.IngressTLS.
-                            properties:
-                              hosts:
-                                description: hosts included in the TLS certificate.
-                                items:
-                                  type: string
-                                type: array
-                              secretName:
-                                description: secretName names the TLS Secret.
-                                type: string
-                            type: object
-                          type: array
-                      type: object
-                    installDeps:
-                      default: true
-                      description: |-
-                        installDeps, when true (default), pre-installs this platform's pip
-                        dependencies onto the shared PVC at startup (telegram/discord/slack need
-                        packages the base image doesn't bundle). Set false to rely on hermes'
-                        runtime lazy-install instead.
-                      type: boolean
-                    secretRef:
-                      description: secretRef names a Secret whose keys carry the platform
-                        credentials.
-                      properties:
-                        name:
-                          default: ""
-                          description: |-
-                            Name of the referent.
-                            This field is effectively required, but due to backwards compatibility is
-                            allowed to be empty. Instances of this type with an empty value here are
-                            almost certainly wrong.
-                            More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
-                          type: string
-                      type: object
-                      x-kubernetes-map-type: atomic
-                    type:
-                      description: type of the messaging platform.
-                      enum:
-                      - telegram
-                      - discord
-                      - slack
-                      - whatsapp
-                      - signal
-                      - email
-                      - teams
-                      - google_chat
-                      type: string
-                    webhookPort:
-                      default: 0
-                      description: 'webhookPort: 0 = polling; >0 exposes a port on
-                        the Service.'
-                      format: int32
-                      type: integer
-                  required:
-                  - type
-                  type: object
-                type: array
-              compression:
-                description: CompressionSpec renders into config.yaml `compression:`
-                  (hot-reloadable).
-                properties:
-                  enabled:
-                    type: boolean
-                  protectFirstN:
-                    format: int32
-                    type: integer
-                  protectLastN:
-                    format: int32
-                    type: integer
-                  targetRatio:
-                    type: string
-                  threshold:
-                    type: string
-                type: object
               cron:
                 description: CronSpec reconciles a declared subset of /opt/data/cron/jobs.json.
                 properties:
@@ -400,6 +252,786 @@ spec:
                         type: string
                     type: object
                 type: object
+              defaultProfile:
+                description: |-
+                  defaultProfile is the implicit "default" hermes profile at $HERMES_HOME
+                  (/opt/data) — the agent the main container runs via `gateway run`. It uses the
+                  shared ProfileConfig, the SAME object as each spec.profiles[] entry.
+                properties:
+                  agent:
+                    description: AgentSpec renders into config.yaml `agent:`.
+                    properties:
+                      disabledToolsets:
+                        description: disabledToolsets lists platform toolsets to disable.
+                          -> agent.disabled_toolsets
+                        items:
+                          type: string
+                        type: array
+                      maxTurns:
+                        description: maxTurns is the max tool-calling iterations.
+                          -> agent.max_turns
+                        format: int32
+                        type: integer
+                      reasoningEffort:
+                        description: reasoningEffort -> agent.reasoning_effort
+                        enum:
+                        - xhigh
+                        - high
+                        - medium
+                        - low
+                        - minimal
+                        - none
+                        type: string
+                    type: object
+                  channels:
+                    description: channels binds messaging platforms for this profile.
+                    items:
+                      description: |-
+                        ChannelSpec binds one messaging platform. See specification §3.3 for the
+                        per-platform env surface (provided via secretRef / envFrom).
+                      properties:
+                        enabled:
+                          default: true
+                          type: boolean
+                        ingress:
+                          description: ingress is only meaningful when webhookPort
+                            > 0.
+                          properties:
+                            annotations:
+                              additionalProperties:
+                                type: string
+                              description: |-
+                                annotations are merged verbatim onto the Ingress object (nginx, Traefik,
+                                cert-manager, external-dns, auth, rate-limit, body-size, …).
+                              type: object
+                            className:
+                              description: className maps to spec.ingressClassName
+                                on the Ingress.
+                              type: string
+                            enabled:
+                              default: false
+                              description: enabled toggles rendering of an Ingress
+                                for this surface.
+                              type: boolean
+                            host:
+                              description: host is the Ingress host. Required when
+                                enabled.
+                              type: string
+                            path:
+                              default: /
+                              description: path is the HTTP path to route to this
+                                surface.
+                              type: string
+                            pathType:
+                              default: Prefix
+                              description: pathType is the Kubernetes Ingress path
+                                matching mode.
+                              enum:
+                              - Exact
+                              - Prefix
+                              - ImplementationSpecific
+                              type: string
+                            tls:
+                              description: |-
+                                tls lists TLS blocks rendered onto the Ingress. secretName may reference a
+                                Secret that cert-manager creates later (existence not required at admission).
+                              items:
+                                description: IngressTLS mirrors networkingv1.IngressTLS.
+                                properties:
+                                  hosts:
+                                    description: hosts included in the TLS certificate.
+                                    items:
+                                      type: string
+                                    type: array
+                                  secretName:
+                                    description: secretName names the TLS Secret.
+                                    type: string
+                                type: object
+                              type: array
+                          type: object
+                        installDeps:
+                          default: true
+                          description: |-
+                            installDeps, when true (default), pre-installs this platform's pip
+                            dependencies onto the shared PVC at startup (telegram/discord/slack need
+                            packages the base image doesn't bundle). Set false to rely on hermes'
+                            runtime lazy-install instead.
+                          type: boolean
+                        secretRef:
+                          description: secretRef names a Secret whose keys carry the
+                            platform credentials.
+                          properties:
+                            name:
+                              default: ""
+                              description: |-
+                                Name of the referent.
+                                This field is effectively required, but due to backwards compatibility is
+                                allowed to be empty. Instances of this type with an empty value here are
+                                almost certainly wrong.
+                                More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                              type: string
+                          type: object
+                          x-kubernetes-map-type: atomic
+                        type:
+                          description: type of the messaging platform.
+                          enum:
+                          - telegram
+                          - discord
+                          - slack
+                          - whatsapp
+                          - signal
+                          - email
+                          - teams
+                          - google_chat
+                          type: string
+                        webhookPort:
+                          default: 0
+                          description: 'webhookPort: 0 = polling; >0 exposes a port
+                            on the Service.'
+                          format: int32
+                          type: integer
+                      required:
+                      - type
+                      type: object
+                    maxItems: 50
+                    type: array
+                  compression:
+                    description: CompressionSpec renders into config.yaml `compression:`
+                      (hot-reloadable).
+                    properties:
+                      enabled:
+                        type: boolean
+                      protectFirstN:
+                        format: int32
+                        type: integer
+                      protectLastN:
+                        format: int32
+                        type: integer
+                      targetRatio:
+                        type: string
+                      threshold:
+                        type: string
+                    type: object
+                  extraConfig:
+                    description: extraConfig is deep-merged into this profile's config.yaml
+                      (free-form).
+                    type: object
+                    x-kubernetes-preserve-unknown-fields: true
+                  extraConfigPrecedence:
+                    description: extraConfigPrecedence controls whether extraConfig
+                      merges or overrides.
+                    enum:
+                    - merge
+                    - override
+                    type: string
+                  honcho:
+                    description: honcho wires cross-session user modeling via a Honcho
+                      instance.
+                    properties:
+                      apiKeySecretRef:
+                        description: |-
+                          apiKeySecretRef supplies HONCHO_API_KEY (for hosted Honcho); optional for
+                          a self-hosted instance reached by baseURL alone.
+                        properties:
+                          key:
+                            description: key within the Secret holding the value.
+                            type: string
+                          name:
+                            description: name of the Secret.
+                            type: string
+                        required:
+                        - key
+                        - name
+                        type: object
+                      baseURL:
+                        description: baseURL points at the Honcho instance; renders
+                          to HONCHO_BASE_URL.
+                        type: string
+                      installPackage:
+                        default: true
+                        description: |-
+                          installPackage, when honcho is in use, adds honcho-ai to the pip-install init
+                          container (the upstream image doesn't bundle it) so it's installed at startup,
+                          persisted across restarts. Defaults true. The install image is packages.pipImage.
+                        type: boolean
+                    type: object
+                  mcp:
+                    description: mcp configures Model Context Protocol servers (config.yaml
+                      `mcp_servers`).
+                    properties:
+                      servers:
+                        description: servers declares MCP servers, rendered to config.yaml
+                          `mcp_servers` keyed by name.
+                        items:
+                          description: |-
+                            MCPServerSpec is one Model Context Protocol server. Set command for a stdio
+                            (subprocess) server or url for an http/sse server — exactly one. Secrets are
+                            supplied via secretEnv and referenced as ${ENVNAME} in headers/env values.
+                          properties:
+                            args:
+                              description: args for command.
+                              items:
+                                type: string
+                              type: array
+                            command:
+                              description: command launches the server subprocess
+                                (stdio transport).
+                              type: string
+                            connectTimeoutSeconds:
+                              description: connectTimeoutSeconds caps the initial
+                                connection (hermes default 60).
+                              format: int32
+                              type: integer
+                            enabled:
+                              description: enabled toggles the server (hermes default
+                                true).
+                              type: boolean
+                            env:
+                              additionalProperties:
+                                type: string
+                              description: env sets subprocess env vars; values may
+                                use ${VAR} interpolation.
+                              type: object
+                            extraConfig:
+                              description: |-
+                                extraConfig is deep-merged into this server's config map for fields not
+                                modeled above (e.g. oauth, sampling). Typed fields win on conflict.
+                              type: object
+                              x-kubernetes-preserve-unknown-fields: true
+                            headers:
+                              additionalProperties:
+                                type: string
+                              description: |-
+                                headers sent on each request; values may use ${VAR} interpolation
+                                (e.g. "Bearer ${MY_TOKEN}").
+                              type: object
+                            name:
+                              description: name keys the server in mcp_servers (must
+                                be unique).
+                              type: string
+                            secretEnv:
+                              description: |-
+                                secretEnv injects Secret-backed env vars onto the agent container so they
+                                can be referenced via ${name} in headers/env values (e.g. API tokens).
+                              items:
+                                description: |-
+                                  MCPSecretEnv binds an agent-container env var to a Secret key, referenced via
+                                  ${name} in an MCP server's headers/env values.
+                                properties:
+                                  name:
+                                    description: name of the env var to expose on
+                                      the agent container.
+                                    type: string
+                                  secretRef:
+                                    description: secretRef is the Secret name+key
+                                      supplying the value.
+                                    properties:
+                                      key:
+                                        description: key within the Secret holding
+                                          the value.
+                                        type: string
+                                      name:
+                                        description: name of the Secret.
+                                        type: string
+                                    required:
+                                    - key
+                                    - name
+                                    type: object
+                                required:
+                                - name
+                                - secretRef
+                                type: object
+                              type: array
+                              x-kubernetes-list-map-keys:
+                              - name
+                              x-kubernetes-list-type: map
+                            sslVerify:
+                              description: sslVerify toggles TLS verification for
+                                https endpoints (hermes default true).
+                              type: boolean
+                            supportsParallelToolCalls:
+                              description: supportsParallelToolCalls allows concurrent
+                                tool execution (stdio).
+                              type: boolean
+                            timeoutSeconds:
+                              description: timeoutSeconds caps a single tool call
+                                (hermes default 120).
+                              format: int32
+                              type: integer
+                            tools:
+                              description: tools filters the server's exposed tools
+                                (set include or exclude, not both).
+                              properties:
+                                exclude:
+                                  description: exclude disables these tools (mutually
+                                    exclusive with include).
+                                  items:
+                                    type: string
+                                  type: array
+                                include:
+                                  description: include enables only these tools (mutually
+                                    exclusive with exclude).
+                                  items:
+                                    type: string
+                                  type: array
+                              type: object
+                            transport:
+                              description: |-
+                                transport selects the transport. stdio is implied by command; url implies
+                                http unless transport=sse. Usually only needed to force sse.
+                              enum:
+                              - stdio
+                              - http
+                              - sse
+                              type: string
+                            url:
+                              description: url is the server endpoint (http/sse transport).
+                              type: string
+                          required:
+                          - name
+                          type: object
+                        maxItems: 100
+                        type: array
+                        x-kubernetes-list-map-keys:
+                        - name
+                        x-kubernetes-list-type: map
+                    type: object
+                  memory:
+                    description: MemorySpec renders into config.yaml `memory:`.
+                    properties:
+                      memoryEnabled:
+                        type: boolean
+                      userProfileEnabled:
+                        type: boolean
+                    type: object
+                  model:
+                    description: ModelSpec renders into config.yaml `model:`.
+                    properties:
+                      apiMode:
+                        description: |-
+                          apiMode selects the wire protocol/transport for the endpoint. Optional: same
+                          inheritance as baseURL. Known values at tag v2026.5.29.2: chat_completions,
+                          anthropic_messages, codex_responses, bedrock_converse (re-verify on tag bump).
+                          -> model.api_mode
+                        type: string
+                      baseURL:
+                        description: |-
+                          baseURL is the provider endpoint. Optional: when provider names a
+                          customProviders entry it defaults from that entry; set here only to override.
+                          -> model.base_url
+                        type: string
+                      contextLength:
+                        description: contextLength is the total context window (hot-reloadable).
+                          -> model.context_length
+                        format: int64
+                        type: integer
+                      default:
+                        description: default model name, e.g. anthropic/claude-opus-4.6.
+                          -> model.default
+                        type: string
+                      maxTokens:
+                        description: maxTokens caps output tokens. -> model.max_tokens
+                        format: int64
+                        type: integer
+                      provider:
+                        description: |-
+                          provider routing mode (e.g. auto), or the name of a customProviders entry to
+                          make it the active provider — the operator then fills base_url/api_mode from
+                          that entry, so they aren't repeated here. Defaults to hermes' own default when
+                          unset (left undefaulted here so named profiles can inherit a custom provider
+                          from spec.defaultProfile). -> model.provider
+                        type: string
+                      providers:
+                        description: |-
+                          providers declares the model providers available to the agent — hermes
+                          built-ins (anthropic/openai/xai/openrouter/…) and/or custom OpenAI-compatible
+                          endpoints — with their credentials and per-model context. provider selects the
+                          active one by name. See ProviderSpec.
+                        items:
+                          description: |-
+                            ProviderSpec declares one model provider — either a hermes built-in (anthropic,
+                            openai, xai, openrouter, …; baseURL omitted, hermes knows the endpoint) or a
+                            custom OpenAI-compatible endpoint (baseURL set). Custom entries render into
+                            config.yaml `custom_providers:`; built-ins do not (only their credentials are
+                            injected). Select the active provider with model.provider == name.
+                          properties:
+                            apiMode:
+                              description: |-
+                                apiMode is the wire protocol/transport (chat_completions, anthropic_messages,
+                                codex_responses, bedrock_converse). Optional; built-ins infer it.
+                              type: string
+                            baseURL:
+                              description: |-
+                                baseURL marks this as a custom OpenAI-compatible endpoint and is rendered into
+                                custom_providers[].base_url. Omit for a built-in provider.
+                              type: string
+                            keyEnv:
+                              description: |-
+                                keyEnv overrides the env var the API key is injected under. Defaults to the
+                                built-in provider's known key env var, or <NAME>_API_KEY for a custom endpoint.
+                              type: string
+                            keySecretRef:
+                              description: |-
+                                keySecretRef supplies this provider's API key; the operator injects it as an
+                                env var (see keyEnv) on the agent container. Leave unset for OAuth providers
+                                (auth via `hermes login`/auth.json) or when the key is wired via spec.env.
+                              properties:
+                                key:
+                                  description: key within the Secret holding the value.
+                                  type: string
+                                name:
+                                  description: name of the Secret.
+                                  type: string
+                              required:
+                              - key
+                              - name
+                              type: object
+                            models:
+                              description: |-
+                                models lists this provider's models and their per-model context windows
+                                (custom providers only — renders to custom_providers[].models).
+                              items:
+                                description: ProviderModelSpec is one model under
+                                  a ProviderSpec.
+                                properties:
+                                  contextLength:
+                                    description: |-
+                                      contextLength is this model's context window in tokens.
+                                      -> custom_providers[].models.<name>.context_length
+                                    format: int64
+                                    type: integer
+                                  name:
+                                    description: name is the model id as the provider
+                                      exposes it.
+                                    type: string
+                                required:
+                                - name
+                                type: object
+                              type: array
+                            name:
+                              description: |-
+                                name is the provider id: a hermes built-in name or alias (e.g. anthropic,
+                                claude, openai, grok, xai, openrouter, zai, kimi, minimax, deepseek), or an
+                                arbitrary name for a custom endpoint.
+                              type: string
+                          required:
+                          - name
+                          type: object
+                        type: array
+                    type: object
+                  runtime:
+                    description: RuntimeSpec selects the tool/code execution backend.
+                    properties:
+                      codeExecution:
+                        description: CodeExecutionSpec renders into config.yaml `code_execution:`.
+                        properties:
+                          maxToolCalls:
+                            format: int32
+                            type: integer
+                          timeout:
+                            format: int32
+                            type: integer
+                        type: object
+                      delegation:
+                        description: DelegationSpec renders into config.yaml `delegation:`.
+                        properties:
+                          maxConcurrentChildren:
+                            format: int32
+                            type: integer
+                          maxIterations:
+                            format: int32
+                            type: integer
+                        type: object
+                      docker:
+                        description: |-
+                          DockerRuntimeSpec configures the Docker-in-Docker sidecar the operator injects
+                          when runtime.terminalBackend is docker (§11.2).
+                        properties:
+                          image:
+                            default: docker:27-dind
+                            type: string
+                          mountCwdToWorkspace:
+                            default: false
+                            type: boolean
+                          resources:
+                            description: ResourceRequirements describes the compute
+                              resource requirements.
+                            properties:
+                              claims:
+                                description: |-
+                                  Claims lists the names of resources, defined in spec.resourceClaims,
+                                  that are used by this container.
+
+                                  This field depends on the
+                                  DynamicResourceAllocation feature gate.
+
+                                  This field is immutable. It can only be set for containers.
+                                items:
+                                  description: ResourceClaim references one entry
+                                    in PodSpec.ResourceClaims.
+                                  properties:
+                                    name:
+                                      description: |-
+                                        Name must match the name of one entry in pod.spec.resourceClaims of
+                                        the Pod where this field is used. It makes that resource available
+                                        inside a container.
+                                      type: string
+                                    request:
+                                      description: |-
+                                        Request is the name chosen for a request in the referenced claim.
+                                        If empty, everything from the claim is made available, otherwise
+                                        only the result of this request.
+                                      type: string
+                                  required:
+                                  - name
+                                  type: object
+                                type: array
+                                x-kubernetes-list-map-keys:
+                                - name
+                                x-kubernetes-list-type: map
+                              limits:
+                                additionalProperties:
+                                  anyOf:
+                                  - type: integer
+                                  - type: string
+                                  pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                                  x-kubernetes-int-or-string: true
+                                description: |-
+                                  Limits describes the maximum amount of compute resources allowed.
+                                  More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                                type: object
+                              requests:
+                                additionalProperties:
+                                  anyOf:
+                                  - type: integer
+                                  - type: string
+                                  pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                                  x-kubernetes-int-or-string: true
+                                description: |-
+                                  Requests describes the minimum amount of compute resources required.
+                                  If Requests is omitted for a container, it defaults to Limits if that is explicitly specified,
+                                  otherwise to an implementation-defined value. Requests cannot exceed Limits.
+                                  More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                                type: object
+                            type: object
+                          rootless:
+                            default: false
+                            type: boolean
+                          socketTransport:
+                            default: unix
+                            enum:
+                            - unix
+                            - tcp
+                            type: string
+                          storage:
+                            description: |-
+                              DockerRuntimeStorage sizes the dind image/layer store (a subPath on the
+                              shared PVC).
+                            properties:
+                              size:
+                                anyOf:
+                                - type: integer
+                                - type: string
+                                pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                                x-kubernetes-int-or-string: true
+                            type: object
+                        type: object
+                      installDeps:
+                        default: true
+                        description: |-
+                          installDeps, when true (default), pre-installs the terminal backend's deps
+                          onto the shared PVC at startup — the pip SDKs for modal/daytona, or
+                          Apptainer for singularity (none are bundled). Set false to rely on hermes'
+                          runtime lazy-install instead.
+                        type: boolean
+                      singularity:
+                        description: |-
+                          SingularityRuntimeSpec configures the Apptainer install for the singularity
+                          terminal backend (the binary is not bundled and is not a simple pip/apt
+                          package, so the operator runs Apptainer's official unprivileged, relocatable
+                          installer into the shared PVC). NOTE: running containers still requires the
+                          node to allow unprivileged user namespaces.
+                        properties:
+                          installImage:
+                            default: rockylinux:9
+                            description: |-
+                              installImage is the image for the Apptainer install init container. It must
+                              provide curl, rpm2cpio, and cpio (the unprivileged installer needs them) —
+                              the default is a RHEL-family image that ships all three.
+                            type: string
+                        type: object
+                      terminalBackend:
+                        default: local
+                        description: terminalBackend selects where tools run. -> terminal.backend
+                        enum:
+                        - local
+                        - docker
+                        - ssh
+                        - modal
+                        - daytona
+                        - singularity
+                        type: string
+                      terminalTimeout:
+                        description: terminalTimeout -> terminal.timeout
+                        format: int32
+                        type: integer
+                    type: object
+                  searxng:
+                    description: searxng wires a self-hosted SearXNG instance for
+                      free web search.
+                    properties:
+                      url:
+                        description: url is the SearXNG base URL; renders to the SEARXNG_URL
+                          env.
+                        type: string
+                    type: object
+                  secrets:
+                    description: secrets wires external secret managers (config.yaml
+                      `secrets`).
+                    properties:
+                      bitwarden:
+                        description: bitwarden syncs secrets from Bitwarden Secrets
+                          Manager (config.yaml `secrets.bitwarden`).
+                        properties:
+                          accessTokenEnv:
+                            description: accessTokenEnv names the env var holding
+                              the access token (hermes default BWS_ACCESS_TOKEN).
+                            type: string
+                          accessTokenSecretRef:
+                            description: |-
+                              accessTokenSecretRef supplies the machine-account access token, injected as the
+                              env var named by accessTokenEnv. Required when enabled.
+                            properties:
+                              key:
+                                description: key within the Secret holding the value.
+                                type: string
+                              name:
+                                description: name of the Secret.
+                                type: string
+                            required:
+                            - key
+                            - name
+                            type: object
+                          autoInstall:
+                            description: autoInstall lets the agent download the bws
+                              binary on demand (hermes default true).
+                            type: boolean
+                          cacheTTLSeconds:
+                            description: cacheTTLSeconds caps how long fetched secrets
+                              are cached in-process (hermes default 300).
+                            format: int32
+                            type: integer
+                          enabled:
+                            description: enabled turns on Bitwarden secret sync (hermes
+                              default false).
+                            type: boolean
+                          overrideExisting:
+                            description: |-
+                              overrideExisting lets Bitwarden values replace existing env vars (hermes default true).
+                              (The access token var is never overwritten by hermes.)
+                            type: boolean
+                          projectID:
+                            description: projectID is the Bitwarden project UUID to
+                              sync from.
+                            type: string
+                          serverURL:
+                            description: |-
+                              serverURL points bws at a custom region or self-hosted instance
+                              (e.g. https://vault.bitwarden.eu, or a self-hosted/Vaultwarden URL). Empty = US cloud.
+                            type: string
+                        type: object
+                    type: object
+                  skills:
+                    description: SkillsSpec controls skill enablement and operator-provided
+                      custom skills.
+                    properties:
+                      creationNudgeInterval:
+                        default: 15
+                        format: int32
+                        type: integer
+                      custom:
+                        description: custom skills written into the PVC and auto-activated.
+                        items:
+                          description: CustomSkill is an operator-shipped skill written
+                            into the PVC and activated.
+                          properties:
+                            enabled:
+                              default: true
+                              type: boolean
+                            inline:
+                              description: inline is the literal SKILL.md content.
+                                Mutually exclusive with sourceRef.
+                              type: string
+                            name:
+                              type: string
+                            sourceRef:
+                              description: |-
+                                sourceRef references a ConfigMap or Secret holding SKILL.md (+files).
+                                Mutually exclusive with inline.
+                              properties:
+                                configMapName:
+                                  type: string
+                                secretName:
+                                  type: string
+                              type: object
+                          required:
+                          - name
+                          type: object
+                        maxItems: 100
+                        type: array
+                      disabled:
+                        description: disabled globally disables bundled skills. ->
+                          skills.disabled
+                        items:
+                          type: string
+                        type: array
+                      enablePackageManagementSkill:
+                        default: true
+                        description: |-
+                          enablePackageManagementSkill ensures the built-in package-management skill
+                          is present and enabled.
+                        type: boolean
+                      externalDirs:
+                        description: externalDirs are read-only external skill dirs.
+                          -> skills.external_dirs
+                        items:
+                          type: string
+                        type: array
+                      platformDisabled:
+                        additionalProperties:
+                          items:
+                            type: string
+                          type: array
+                        description: platformDisabled disables skills per platform.
+                          -> skills.platform_disabled
+                        type: object
+                    type: object
+                  soul:
+                    description: |-
+                      soul renders to this profile's SOUL.md (persona; also the discovery marker
+                      for named profiles).
+                    type: string
+                type: object
+                x-kubernetes-validations:
+                - message: each skills.custom entry must set exactly one of sourceRef
+                    or inline
+                  rule: '!has(self.skills) || !has(self.skills.custom) || self.skills.custom.all(s,
+                    has(s.sourceRef) != has(s.inline))'
+                - message: each mcp.servers entry must set exactly one of command
+                    (stdio) or url (http/sse)
+                  rule: '!has(self.mcp) || !has(self.mcp.servers) || self.mcp.servers.all(s,
+                    has(s.command) != has(s.url))'
+                - message: mcp.servers transport=stdio requires command; transport=http/sse
+                    requires url
+                  rule: '!has(self.mcp) || !has(self.mcp.servers) || self.mcp.servers.all(s,
+                    !has(s.transport) || (s.transport == ''stdio'' ? has(s.command)
+                    : has(s.url)))'
+                - message: mcp.servers tools must set at most one of include or exclude
+                  rule: '!has(self.mcp) || !has(self.mcp.servers) || self.mcp.servers.all(s,
+                    !has(s.tools) || !(has(s.tools.include) && has(s.tools.exclude)))'
+                - message: secrets.bitwarden.enabled requires accessTokenSecretRef
+                  rule: '!has(self.secrets) || !has(self.secrets.bitwarden) || !has(self.secrets.bitwarden.enabled)
+                    || !self.secrets.bitwarden.enabled || has(self.secrets.bitwarden.accessTokenSecretRef)'
               env:
                 description: env mirrors corev1 EnvVar entries onto the agent container.
                 items:
@@ -605,19 +1237,6 @@ spec:
                       x-kubernetes-map-type: atomic
                   type: object
                 type: array
-              extraConfig:
-                description: extraConfig is deep-merged into config.yaml (free-form,
-                  preserved verbatim).
-                type: object
-                x-kubernetes-preserve-unknown-fields: true
-              extraConfigPrecedence:
-                default: merge
-                description: extraConfigPrecedence controls whether extraConfig merges
-                  or overrides.
-                enum:
-                - merge
-                - override
-                type: string
               fsGroup:
                 default: 10000
                 format: int64
@@ -630,38 +1249,6 @@ spec:
                 default: 10000
                 format: int64
                 type: integer
-              honcho:
-                description: |-
-                  honcho wires cross-session user modeling via a Honcho instance (sets
-                  HONCHO_BASE_URL and, if set, HONCHO_API_KEY on the agent).
-                properties:
-                  apiKeySecretRef:
-                    description: |-
-                      apiKeySecretRef supplies HONCHO_API_KEY (for hosted Honcho); optional for
-                      a self-hosted instance reached by baseURL alone.
-                    properties:
-                      key:
-                        description: key within the Secret holding the value.
-                        type: string
-                      name:
-                        description: name of the Secret.
-                        type: string
-                    required:
-                    - key
-                    - name
-                    type: object
-                  baseURL:
-                    description: baseURL points at the Honcho instance; renders to
-                      HONCHO_BASE_URL.
-                    type: string
-                  installPackage:
-                    default: true
-                    description: |-
-                      installPackage, when honcho is in use, adds honcho-ai to the pip-install init
-                      container (the upstream image doesn't bundle it) so it's installed at startup,
-                      persisted across restarts. Defaults true. The install image is packages.pipImage.
-                    type: boolean
-                type: object
               image:
                 description: image is the agent container image (the operator's derived
                   image with brew).
@@ -763,269 +1350,10 @@ spec:
                       extra setup, using the pod's ServiceAccount identity.
                     type: boolean
                 type: object
-              mcp:
-                description: mcp configures Model Context Protocol servers (config.yaml
-                  `mcp_servers`).
-                properties:
-                  servers:
-                    description: servers declares MCP servers, rendered to config.yaml
-                      `mcp_servers` keyed by name.
-                    items:
-                      description: |-
-                        MCPServerSpec is one Model Context Protocol server. Set command for a stdio
-                        (subprocess) server or url for an http/sse server — exactly one. Secrets are
-                        supplied via secretEnv and referenced as ${ENVNAME} in headers/env values.
-                      properties:
-                        args:
-                          description: args for command.
-                          items:
-                            type: string
-                          type: array
-                        command:
-                          description: command launches the server subprocess (stdio
-                            transport).
-                          type: string
-                        connectTimeoutSeconds:
-                          description: connectTimeoutSeconds caps the initial connection
-                            (hermes default 60).
-                          format: int32
-                          type: integer
-                        enabled:
-                          description: enabled toggles the server (hermes default
-                            true).
-                          type: boolean
-                        env:
-                          additionalProperties:
-                            type: string
-                          description: env sets subprocess env vars; values may use
-                            ${VAR} interpolation.
-                          type: object
-                        extraConfig:
-                          description: |-
-                            extraConfig is deep-merged into this server's config map for fields not
-                            modeled above (e.g. oauth, sampling). Typed fields win on conflict.
-                          type: object
-                          x-kubernetes-preserve-unknown-fields: true
-                        headers:
-                          additionalProperties:
-                            type: string
-                          description: |-
-                            headers sent on each request; values may use ${VAR} interpolation
-                            (e.g. "Bearer ${MY_TOKEN}").
-                          type: object
-                        name:
-                          description: name keys the server in mcp_servers (must be
-                            unique).
-                          type: string
-                        secretEnv:
-                          description: |-
-                            secretEnv injects Secret-backed env vars onto the agent container so they
-                            can be referenced via ${name} in headers/env values (e.g. API tokens).
-                          items:
-                            description: |-
-                              MCPSecretEnv binds an agent-container env var to a Secret key, referenced via
-                              ${name} in an MCP server's headers/env values.
-                            properties:
-                              name:
-                                description: name of the env var to expose on the
-                                  agent container.
-                                type: string
-                              secretRef:
-                                description: secretRef is the Secret name+key supplying
-                                  the value.
-                                properties:
-                                  key:
-                                    description: key within the Secret holding the
-                                      value.
-                                    type: string
-                                  name:
-                                    description: name of the Secret.
-                                    type: string
-                                required:
-                                - key
-                                - name
-                                type: object
-                            required:
-                            - name
-                            - secretRef
-                            type: object
-                          type: array
-                          x-kubernetes-list-map-keys:
-                          - name
-                          x-kubernetes-list-type: map
-                        sslVerify:
-                          description: sslVerify toggles TLS verification for https
-                            endpoints (hermes default true).
-                          type: boolean
-                        supportsParallelToolCalls:
-                          description: supportsParallelToolCalls allows concurrent
-                            tool execution (stdio).
-                          type: boolean
-                        timeoutSeconds:
-                          description: timeoutSeconds caps a single tool call (hermes
-                            default 120).
-                          format: int32
-                          type: integer
-                        tools:
-                          description: tools filters the server's exposed tools (set
-                            include or exclude, not both).
-                          properties:
-                            exclude:
-                              description: exclude disables these tools (mutually
-                                exclusive with include).
-                              items:
-                                type: string
-                              type: array
-                            include:
-                              description: include enables only these tools (mutually
-                                exclusive with exclude).
-                              items:
-                                type: string
-                              type: array
-                          type: object
-                        transport:
-                          description: |-
-                            transport selects the transport. stdio is implied by command; url implies
-                            http unless transport=sse. Usually only needed to force sse.
-                          enum:
-                          - stdio
-                          - http
-                          - sse
-                          type: string
-                        url:
-                          description: url is the server endpoint (http/sse transport).
-                          type: string
-                      required:
-                      - name
-                      type: object
-                    type: array
-                    x-kubernetes-list-map-keys:
-                    - name
-                    x-kubernetes-list-type: map
-                type: object
-              memory:
-                description: MemorySpec renders into config.yaml `memory:`.
-                properties:
-                  memoryEnabled:
-                    type: boolean
-                  userProfileEnabled:
-                    type: boolean
-                type: object
-              model:
-                description: ModelSpec renders into config.yaml `model:`.
-                properties:
-                  apiMode:
-                    description: |-
-                      apiMode selects the wire protocol/transport for the endpoint. Optional: same
-                      inheritance as baseURL. Known values at tag v2026.5.29.2: chat_completions,
-                      anthropic_messages, codex_responses, bedrock_converse (re-verify on tag bump).
-                      -> model.api_mode
-                    type: string
-                  baseURL:
-                    description: |-
-                      baseURL is the provider endpoint. Optional: when provider names a
-                      customProviders entry it defaults from that entry; set here only to override.
-                      -> model.base_url
-                    type: string
-                  contextLength:
-                    description: contextLength is the total context window (hot-reloadable).
-                      -> model.context_length
-                    format: int64
-                    type: integer
-                  default:
-                    description: default model name, e.g. anthropic/claude-opus-4.6.
-                      -> model.default
-                    type: string
-                  maxTokens:
-                    description: maxTokens caps output tokens. -> model.max_tokens
-                    format: int64
-                    type: integer
-                  provider:
-                    default: auto
-                    description: |-
-                      provider routing mode (e.g. auto), or the name of a customProviders entry to
-                      make it the active provider — the operator then fills base_url/api_mode from
-                      that entry, so they aren't repeated here. -> model.provider
-                    type: string
-                  providers:
-                    description: |-
-                      providers declares the model providers available to the agent — hermes
-                      built-ins (anthropic/openai/xai/openrouter/…) and/or custom OpenAI-compatible
-                      endpoints — with their credentials and per-model context. provider selects the
-                      active one by name. See ProviderSpec.
-                    items:
-                      description: |-
-                        ProviderSpec declares one model provider — either a hermes built-in (anthropic,
-                        openai, xai, openrouter, …; baseURL omitted, hermes knows the endpoint) or a
-                        custom OpenAI-compatible endpoint (baseURL set). Custom entries render into
-                        config.yaml `custom_providers:`; built-ins do not (only their credentials are
-                        injected). Select the active provider with model.provider == name.
-                      properties:
-                        apiMode:
-                          description: |-
-                            apiMode is the wire protocol/transport (chat_completions, anthropic_messages,
-                            codex_responses, bedrock_converse). Optional; built-ins infer it.
-                          type: string
-                        baseURL:
-                          description: |-
-                            baseURL marks this as a custom OpenAI-compatible endpoint and is rendered into
-                            custom_providers[].base_url. Omit for a built-in provider.
-                          type: string
-                        keyEnv:
-                          description: |-
-                            keyEnv overrides the env var the API key is injected under. Defaults to the
-                            built-in provider's known key env var, or <NAME>_API_KEY for a custom endpoint.
-                          type: string
-                        keySecretRef:
-                          description: |-
-                            keySecretRef supplies this provider's API key; the operator injects it as an
-                            env var (see keyEnv) on the agent container. Leave unset for OAuth providers
-                            (auth via `hermes login`/auth.json) or when the key is wired via spec.env.
-                          properties:
-                            key:
-                              description: key within the Secret holding the value.
-                              type: string
-                            name:
-                              description: name of the Secret.
-                              type: string
-                          required:
-                          - key
-                          - name
-                          type: object
-                        models:
-                          description: |-
-                            models lists this provider's models and their per-model context windows
-                            (custom providers only — renders to custom_providers[].models).
-                          items:
-                            description: ProviderModelSpec is one model under a ProviderSpec.
-                            properties:
-                              contextLength:
-                                description: |-
-                                  contextLength is this model's context window in tokens.
-                                  -> custom_providers[].models.<name>.context_length
-                                format: int64
-                                type: integer
-                              name:
-                                description: name is the model id as the provider
-                                  exposes it.
-                                type: string
-                            required:
-                            - name
-                            type: object
-                          type: array
-                        name:
-                          description: |-
-                            name is the provider id: a hermes built-in name or alias (e.g. anthropic,
-                            claude, openai, grok, xai, openrouter, zai, kimi, minimax, deepseek), or an
-                            arbitrary name for a custom endpoint.
-                          type: string
-                      required:
-                      - name
-                      type: object
-                    type: array
-                type: object
               packages:
-                description: PackagesSpec declares runtime package installation.
+                description: |-
+                  packages declares runtime package installation onto the shared PVC (pip/brew),
+                  shared by all profiles in the pod.
                 properties:
                   brew:
                     description: brew packages installed to the shared PVC (persisted,
@@ -9592,6 +9920,841 @@ spec:
                         type: integer
                     type: object
                 type: object
+              profiles:
+                description: |-
+                  profiles declares additional hermes profiles hosted in the same pod: each is
+                  a complete, independent agent instance (own config.yaml/SOUL.md/model/skills/
+                  memory/sessions/channels and its OWN gateway process and bot token) rendered
+                  under $HERMES_HOME/profiles/<name>/, auto-started in-pod by the upstream
+                  image. A profile's config sections override defaultProfile; unset sections
+                  inherit it.
+                items:
+                  description: |-
+                    ProfileSpec declares one named hermes profile: a complete, independent agent
+                    instance living under $HERMES_HOME/profiles/<name>/, with its own gateway
+                    process and bot token. It carries the same ProfileConfig as spec.defaultProfile
+                    (the config keys sit inline under the entry); sections it leaves unset inherit
+                    spec.defaultProfile. The profile's gateway is discovered (SOUL.md marker) and
+                    auto-started (gateway_state=running) by the upstream image in the same pod.
+                  properties:
+                    agent:
+                      description: AgentSpec renders into config.yaml `agent:`.
+                      properties:
+                        disabledToolsets:
+                          description: disabledToolsets lists platform toolsets to
+                            disable. -> agent.disabled_toolsets
+                          items:
+                            type: string
+                          type: array
+                        maxTurns:
+                          description: maxTurns is the max tool-calling iterations.
+                            -> agent.max_turns
+                          format: int32
+                          type: integer
+                        reasoningEffort:
+                          description: reasoningEffort -> agent.reasoning_effort
+                          enum:
+                          - xhigh
+                          - high
+                          - medium
+                          - low
+                          - minimal
+                          - none
+                          type: string
+                      type: object
+                    channels:
+                      description: channels binds messaging platforms for this profile.
+                      items:
+                        description: |-
+                          ChannelSpec binds one messaging platform. See specification §3.3 for the
+                          per-platform env surface (provided via secretRef / envFrom).
+                        properties:
+                          enabled:
+                            default: true
+                            type: boolean
+                          ingress:
+                            description: ingress is only meaningful when webhookPort
+                              > 0.
+                            properties:
+                              annotations:
+                                additionalProperties:
+                                  type: string
+                                description: |-
+                                  annotations are merged verbatim onto the Ingress object (nginx, Traefik,
+                                  cert-manager, external-dns, auth, rate-limit, body-size, …).
+                                type: object
+                              className:
+                                description: className maps to spec.ingressClassName
+                                  on the Ingress.
+                                type: string
+                              enabled:
+                                default: false
+                                description: enabled toggles rendering of an Ingress
+                                  for this surface.
+                                type: boolean
+                              host:
+                                description: host is the Ingress host. Required when
+                                  enabled.
+                                type: string
+                              path:
+                                default: /
+                                description: path is the HTTP path to route to this
+                                  surface.
+                                type: string
+                              pathType:
+                                default: Prefix
+                                description: pathType is the Kubernetes Ingress path
+                                  matching mode.
+                                enum:
+                                - Exact
+                                - Prefix
+                                - ImplementationSpecific
+                                type: string
+                              tls:
+                                description: |-
+                                  tls lists TLS blocks rendered onto the Ingress. secretName may reference a
+                                  Secret that cert-manager creates later (existence not required at admission).
+                                items:
+                                  description: IngressTLS mirrors networkingv1.IngressTLS.
+                                  properties:
+                                    hosts:
+                                      description: hosts included in the TLS certificate.
+                                      items:
+                                        type: string
+                                      type: array
+                                    secretName:
+                                      description: secretName names the TLS Secret.
+                                      type: string
+                                  type: object
+                                type: array
+                            type: object
+                          installDeps:
+                            default: true
+                            description: |-
+                              installDeps, when true (default), pre-installs this platform's pip
+                              dependencies onto the shared PVC at startup (telegram/discord/slack need
+                              packages the base image doesn't bundle). Set false to rely on hermes'
+                              runtime lazy-install instead.
+                            type: boolean
+                          secretRef:
+                            description: secretRef names a Secret whose keys carry
+                              the platform credentials.
+                            properties:
+                              name:
+                                default: ""
+                                description: |-
+                                  Name of the referent.
+                                  This field is effectively required, but due to backwards compatibility is
+                                  allowed to be empty. Instances of this type with an empty value here are
+                                  almost certainly wrong.
+                                  More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                                type: string
+                            type: object
+                            x-kubernetes-map-type: atomic
+                          type:
+                            description: type of the messaging platform.
+                            enum:
+                            - telegram
+                            - discord
+                            - slack
+                            - whatsapp
+                            - signal
+                            - email
+                            - teams
+                            - google_chat
+                            type: string
+                          webhookPort:
+                            default: 0
+                            description: 'webhookPort: 0 = polling; >0 exposes a port
+                              on the Service.'
+                            format: int32
+                            type: integer
+                        required:
+                        - type
+                        type: object
+                      maxItems: 50
+                      type: array
+                    compression:
+                      description: CompressionSpec renders into config.yaml `compression:`
+                        (hot-reloadable).
+                      properties:
+                        enabled:
+                          type: boolean
+                        protectFirstN:
+                          format: int32
+                          type: integer
+                        protectLastN:
+                          format: int32
+                          type: integer
+                        targetRatio:
+                          type: string
+                        threshold:
+                          type: string
+                      type: object
+                    enabled:
+                      default: true
+                      description: |-
+                        enabled controls whether this profile's gateway auto-starts on boot (writes
+                        gateway_state=running). When false the profile is rendered and discovered but
+                        its gateway stays down until started manually. Defaults true.
+                      type: boolean
+                    envSecretRef:
+                      description: |-
+                        envSecretRef supplies this profile's .env (KEY=VALUE dotenv body) from a
+                        Secret. The upstream image loads it with override=True so the profile's bot
+                        tokens stay isolated from the container env and from other profiles. The
+                        operator mounts it read-only and copies it to profiles/<name>/.env without
+                        decoding it; operator-computed non-secret webhook vars are appended after it.
+                      properties:
+                        key:
+                          default: .env
+                          description: key within the Secret holding the file body.
+                            Defaults to ".env".
+                          type: string
+                        name:
+                          description: name of the Secret.
+                          type: string
+                      required:
+                      - name
+                      type: object
+                    extraConfig:
+                      description: extraConfig is deep-merged into this profile's
+                        config.yaml (free-form).
+                      type: object
+                      x-kubernetes-preserve-unknown-fields: true
+                    extraConfigPrecedence:
+                      description: extraConfigPrecedence controls whether extraConfig
+                        merges or overrides.
+                      enum:
+                      - merge
+                      - override
+                      type: string
+                    honcho:
+                      description: honcho wires cross-session user modeling via a
+                        Honcho instance.
+                      properties:
+                        apiKeySecretRef:
+                          description: |-
+                            apiKeySecretRef supplies HONCHO_API_KEY (for hosted Honcho); optional for
+                            a self-hosted instance reached by baseURL alone.
+                          properties:
+                            key:
+                              description: key within the Secret holding the value.
+                              type: string
+                            name:
+                              description: name of the Secret.
+                              type: string
+                          required:
+                          - key
+                          - name
+                          type: object
+                        baseURL:
+                          description: baseURL points at the Honcho instance; renders
+                            to HONCHO_BASE_URL.
+                          type: string
+                        installPackage:
+                          default: true
+                          description: |-
+                            installPackage, when honcho is in use, adds honcho-ai to the pip-install init
+                            container (the upstream image doesn't bundle it) so it's installed at startup,
+                            persisted across restarts. Defaults true. The install image is packages.pipImage.
+                          type: boolean
+                      type: object
+                    mcp:
+                      description: mcp configures Model Context Protocol servers (config.yaml
+                        `mcp_servers`).
+                      properties:
+                        servers:
+                          description: servers declares MCP servers, rendered to config.yaml
+                            `mcp_servers` keyed by name.
+                          items:
+                            description: |-
+                              MCPServerSpec is one Model Context Protocol server. Set command for a stdio
+                              (subprocess) server or url for an http/sse server — exactly one. Secrets are
+                              supplied via secretEnv and referenced as ${ENVNAME} in headers/env values.
+                            properties:
+                              args:
+                                description: args for command.
+                                items:
+                                  type: string
+                                type: array
+                              command:
+                                description: command launches the server subprocess
+                                  (stdio transport).
+                                type: string
+                              connectTimeoutSeconds:
+                                description: connectTimeoutSeconds caps the initial
+                                  connection (hermes default 60).
+                                format: int32
+                                type: integer
+                              enabled:
+                                description: enabled toggles the server (hermes default
+                                  true).
+                                type: boolean
+                              env:
+                                additionalProperties:
+                                  type: string
+                                description: env sets subprocess env vars; values
+                                  may use ${VAR} interpolation.
+                                type: object
+                              extraConfig:
+                                description: |-
+                                  extraConfig is deep-merged into this server's config map for fields not
+                                  modeled above (e.g. oauth, sampling). Typed fields win on conflict.
+                                type: object
+                                x-kubernetes-preserve-unknown-fields: true
+                              headers:
+                                additionalProperties:
+                                  type: string
+                                description: |-
+                                  headers sent on each request; values may use ${VAR} interpolation
+                                  (e.g. "Bearer ${MY_TOKEN}").
+                                type: object
+                              name:
+                                description: name keys the server in mcp_servers (must
+                                  be unique).
+                                type: string
+                              secretEnv:
+                                description: |-
+                                  secretEnv injects Secret-backed env vars onto the agent container so they
+                                  can be referenced via ${name} in headers/env values (e.g. API tokens).
+                                items:
+                                  description: |-
+                                    MCPSecretEnv binds an agent-container env var to a Secret key, referenced via
+                                    ${name} in an MCP server's headers/env values.
+                                  properties:
+                                    name:
+                                      description: name of the env var to expose on
+                                        the agent container.
+                                      type: string
+                                    secretRef:
+                                      description: secretRef is the Secret name+key
+                                        supplying the value.
+                                      properties:
+                                        key:
+                                          description: key within the Secret holding
+                                            the value.
+                                          type: string
+                                        name:
+                                          description: name of the Secret.
+                                          type: string
+                                      required:
+                                      - key
+                                      - name
+                                      type: object
+                                  required:
+                                  - name
+                                  - secretRef
+                                  type: object
+                                type: array
+                                x-kubernetes-list-map-keys:
+                                - name
+                                x-kubernetes-list-type: map
+                              sslVerify:
+                                description: sslVerify toggles TLS verification for
+                                  https endpoints (hermes default true).
+                                type: boolean
+                              supportsParallelToolCalls:
+                                description: supportsParallelToolCalls allows concurrent
+                                  tool execution (stdio).
+                                type: boolean
+                              timeoutSeconds:
+                                description: timeoutSeconds caps a single tool call
+                                  (hermes default 120).
+                                format: int32
+                                type: integer
+                              tools:
+                                description: tools filters the server's exposed tools
+                                  (set include or exclude, not both).
+                                properties:
+                                  exclude:
+                                    description: exclude disables these tools (mutually
+                                      exclusive with include).
+                                    items:
+                                      type: string
+                                    type: array
+                                  include:
+                                    description: include enables only these tools
+                                      (mutually exclusive with exclude).
+                                    items:
+                                      type: string
+                                    type: array
+                                type: object
+                              transport:
+                                description: |-
+                                  transport selects the transport. stdio is implied by command; url implies
+                                  http unless transport=sse. Usually only needed to force sse.
+                                enum:
+                                - stdio
+                                - http
+                                - sse
+                                type: string
+                              url:
+                                description: url is the server endpoint (http/sse
+                                  transport).
+                                type: string
+                            required:
+                            - name
+                            type: object
+                          maxItems: 100
+                          type: array
+                          x-kubernetes-list-map-keys:
+                          - name
+                          x-kubernetes-list-type: map
+                      type: object
+                    memory:
+                      description: MemorySpec renders into config.yaml `memory:`.
+                      properties:
+                        memoryEnabled:
+                          type: boolean
+                        userProfileEnabled:
+                          type: boolean
+                      type: object
+                    model:
+                      description: ModelSpec renders into config.yaml `model:`.
+                      properties:
+                        apiMode:
+                          description: |-
+                            apiMode selects the wire protocol/transport for the endpoint. Optional: same
+                            inheritance as baseURL. Known values at tag v2026.5.29.2: chat_completions,
+                            anthropic_messages, codex_responses, bedrock_converse (re-verify on tag bump).
+                            -> model.api_mode
+                          type: string
+                        baseURL:
+                          description: |-
+                            baseURL is the provider endpoint. Optional: when provider names a
+                            customProviders entry it defaults from that entry; set here only to override.
+                            -> model.base_url
+                          type: string
+                        contextLength:
+                          description: contextLength is the total context window (hot-reloadable).
+                            -> model.context_length
+                          format: int64
+                          type: integer
+                        default:
+                          description: default model name, e.g. anthropic/claude-opus-4.6.
+                            -> model.default
+                          type: string
+                        maxTokens:
+                          description: maxTokens caps output tokens. -> model.max_tokens
+                          format: int64
+                          type: integer
+                        provider:
+                          description: |-
+                            provider routing mode (e.g. auto), or the name of a customProviders entry to
+                            make it the active provider — the operator then fills base_url/api_mode from
+                            that entry, so they aren't repeated here. Defaults to hermes' own default when
+                            unset (left undefaulted here so named profiles can inherit a custom provider
+                            from spec.defaultProfile). -> model.provider
+                          type: string
+                        providers:
+                          description: |-
+                            providers declares the model providers available to the agent — hermes
+                            built-ins (anthropic/openai/xai/openrouter/…) and/or custom OpenAI-compatible
+                            endpoints — with their credentials and per-model context. provider selects the
+                            active one by name. See ProviderSpec.
+                          items:
+                            description: |-
+                              ProviderSpec declares one model provider — either a hermes built-in (anthropic,
+                              openai, xai, openrouter, …; baseURL omitted, hermes knows the endpoint) or a
+                              custom OpenAI-compatible endpoint (baseURL set). Custom entries render into
+                              config.yaml `custom_providers:`; built-ins do not (only their credentials are
+                              injected). Select the active provider with model.provider == name.
+                            properties:
+                              apiMode:
+                                description: |-
+                                  apiMode is the wire protocol/transport (chat_completions, anthropic_messages,
+                                  codex_responses, bedrock_converse). Optional; built-ins infer it.
+                                type: string
+                              baseURL:
+                                description: |-
+                                  baseURL marks this as a custom OpenAI-compatible endpoint and is rendered into
+                                  custom_providers[].base_url. Omit for a built-in provider.
+                                type: string
+                              keyEnv:
+                                description: |-
+                                  keyEnv overrides the env var the API key is injected under. Defaults to the
+                                  built-in provider's known key env var, or <NAME>_API_KEY for a custom endpoint.
+                                type: string
+                              keySecretRef:
+                                description: |-
+                                  keySecretRef supplies this provider's API key; the operator injects it as an
+                                  env var (see keyEnv) on the agent container. Leave unset for OAuth providers
+                                  (auth via `hermes login`/auth.json) or when the key is wired via spec.env.
+                                properties:
+                                  key:
+                                    description: key within the Secret holding the
+                                      value.
+                                    type: string
+                                  name:
+                                    description: name of the Secret.
+                                    type: string
+                                required:
+                                - key
+                                - name
+                                type: object
+                              models:
+                                description: |-
+                                  models lists this provider's models and their per-model context windows
+                                  (custom providers only — renders to custom_providers[].models).
+                                items:
+                                  description: ProviderModelSpec is one model under
+                                    a ProviderSpec.
+                                  properties:
+                                    contextLength:
+                                      description: |-
+                                        contextLength is this model's context window in tokens.
+                                        -> custom_providers[].models.<name>.context_length
+                                      format: int64
+                                      type: integer
+                                    name:
+                                      description: name is the model id as the provider
+                                        exposes it.
+                                      type: string
+                                  required:
+                                  - name
+                                  type: object
+                                type: array
+                              name:
+                                description: |-
+                                  name is the provider id: a hermes built-in name or alias (e.g. anthropic,
+                                  claude, openai, grok, xai, openrouter, zai, kimi, minimax, deepseek), or an
+                                  arbitrary name for a custom endpoint.
+                                type: string
+                            required:
+                            - name
+                            type: object
+                          type: array
+                      type: object
+                    name:
+                      description: |-
+                        name is the hermes profile id (lowercase alphanumeric, '-' and '_'; ≤64
+                        chars). Reserved names (hermes/default/test/tmp/root/sudo) are rejected.
+                      pattern: ^[a-z0-9][a-z0-9_-]{0,63}$
+                      type: string
+                    runtime:
+                      description: RuntimeSpec selects the tool/code execution backend.
+                      properties:
+                        codeExecution:
+                          description: CodeExecutionSpec renders into config.yaml
+                            `code_execution:`.
+                          properties:
+                            maxToolCalls:
+                              format: int32
+                              type: integer
+                            timeout:
+                              format: int32
+                              type: integer
+                          type: object
+                        delegation:
+                          description: DelegationSpec renders into config.yaml `delegation:`.
+                          properties:
+                            maxConcurrentChildren:
+                              format: int32
+                              type: integer
+                            maxIterations:
+                              format: int32
+                              type: integer
+                          type: object
+                        docker:
+                          description: |-
+                            DockerRuntimeSpec configures the Docker-in-Docker sidecar the operator injects
+                            when runtime.terminalBackend is docker (§11.2).
+                          properties:
+                            image:
+                              default: docker:27-dind
+                              type: string
+                            mountCwdToWorkspace:
+                              default: false
+                              type: boolean
+                            resources:
+                              description: ResourceRequirements describes the compute
+                                resource requirements.
+                              properties:
+                                claims:
+                                  description: |-
+                                    Claims lists the names of resources, defined in spec.resourceClaims,
+                                    that are used by this container.
+
+                                    This field depends on the
+                                    DynamicResourceAllocation feature gate.
+
+                                    This field is immutable. It can only be set for containers.
+                                  items:
+                                    description: ResourceClaim references one entry
+                                      in PodSpec.ResourceClaims.
+                                    properties:
+                                      name:
+                                        description: |-
+                                          Name must match the name of one entry in pod.spec.resourceClaims of
+                                          the Pod where this field is used. It makes that resource available
+                                          inside a container.
+                                        type: string
+                                      request:
+                                        description: |-
+                                          Request is the name chosen for a request in the referenced claim.
+                                          If empty, everything from the claim is made available, otherwise
+                                          only the result of this request.
+                                        type: string
+                                    required:
+                                    - name
+                                    type: object
+                                  type: array
+                                  x-kubernetes-list-map-keys:
+                                  - name
+                                  x-kubernetes-list-type: map
+                                limits:
+                                  additionalProperties:
+                                    anyOf:
+                                    - type: integer
+                                    - type: string
+                                    pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                                    x-kubernetes-int-or-string: true
+                                  description: |-
+                                    Limits describes the maximum amount of compute resources allowed.
+                                    More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                                  type: object
+                                requests:
+                                  additionalProperties:
+                                    anyOf:
+                                    - type: integer
+                                    - type: string
+                                    pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                                    x-kubernetes-int-or-string: true
+                                  description: |-
+                                    Requests describes the minimum amount of compute resources required.
+                                    If Requests is omitted for a container, it defaults to Limits if that is explicitly specified,
+                                    otherwise to an implementation-defined value. Requests cannot exceed Limits.
+                                    More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                                  type: object
+                              type: object
+                            rootless:
+                              default: false
+                              type: boolean
+                            socketTransport:
+                              default: unix
+                              enum:
+                              - unix
+                              - tcp
+                              type: string
+                            storage:
+                              description: |-
+                                DockerRuntimeStorage sizes the dind image/layer store (a subPath on the
+                                shared PVC).
+                              properties:
+                                size:
+                                  anyOf:
+                                  - type: integer
+                                  - type: string
+                                  pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                                  x-kubernetes-int-or-string: true
+                              type: object
+                          type: object
+                        installDeps:
+                          default: true
+                          description: |-
+                            installDeps, when true (default), pre-installs the terminal backend's deps
+                            onto the shared PVC at startup — the pip SDKs for modal/daytona, or
+                            Apptainer for singularity (none are bundled). Set false to rely on hermes'
+                            runtime lazy-install instead.
+                          type: boolean
+                        singularity:
+                          description: |-
+                            SingularityRuntimeSpec configures the Apptainer install for the singularity
+                            terminal backend (the binary is not bundled and is not a simple pip/apt
+                            package, so the operator runs Apptainer's official unprivileged, relocatable
+                            installer into the shared PVC). NOTE: running containers still requires the
+                            node to allow unprivileged user namespaces.
+                          properties:
+                            installImage:
+                              default: rockylinux:9
+                              description: |-
+                                installImage is the image for the Apptainer install init container. It must
+                                provide curl, rpm2cpio, and cpio (the unprivileged installer needs them) —
+                                the default is a RHEL-family image that ships all three.
+                              type: string
+                          type: object
+                        terminalBackend:
+                          default: local
+                          description: terminalBackend selects where tools run. ->
+                            terminal.backend
+                          enum:
+                          - local
+                          - docker
+                          - ssh
+                          - modal
+                          - daytona
+                          - singularity
+                          type: string
+                        terminalTimeout:
+                          description: terminalTimeout -> terminal.timeout
+                          format: int32
+                          type: integer
+                      type: object
+                    searxng:
+                      description: searxng wires a self-hosted SearXNG instance for
+                        free web search.
+                      properties:
+                        url:
+                          description: url is the SearXNG base URL; renders to the
+                            SEARXNG_URL env.
+                          type: string
+                      type: object
+                    secrets:
+                      description: secrets wires external secret managers (config.yaml
+                        `secrets`).
+                      properties:
+                        bitwarden:
+                          description: bitwarden syncs secrets from Bitwarden Secrets
+                            Manager (config.yaml `secrets.bitwarden`).
+                          properties:
+                            accessTokenEnv:
+                              description: accessTokenEnv names the env var holding
+                                the access token (hermes default BWS_ACCESS_TOKEN).
+                              type: string
+                            accessTokenSecretRef:
+                              description: |-
+                                accessTokenSecretRef supplies the machine-account access token, injected as the
+                                env var named by accessTokenEnv. Required when enabled.
+                              properties:
+                                key:
+                                  description: key within the Secret holding the value.
+                                  type: string
+                                name:
+                                  description: name of the Secret.
+                                  type: string
+                              required:
+                              - key
+                              - name
+                              type: object
+                            autoInstall:
+                              description: autoInstall lets the agent download the
+                                bws binary on demand (hermes default true).
+                              type: boolean
+                            cacheTTLSeconds:
+                              description: cacheTTLSeconds caps how long fetched secrets
+                                are cached in-process (hermes default 300).
+                              format: int32
+                              type: integer
+                            enabled:
+                              description: enabled turns on Bitwarden secret sync
+                                (hermes default false).
+                              type: boolean
+                            overrideExisting:
+                              description: |-
+                                overrideExisting lets Bitwarden values replace existing env vars (hermes default true).
+                                (The access token var is never overwritten by hermes.)
+                              type: boolean
+                            projectID:
+                              description: projectID is the Bitwarden project UUID
+                                to sync from.
+                              type: string
+                            serverURL:
+                              description: |-
+                                serverURL points bws at a custom region or self-hosted instance
+                                (e.g. https://vault.bitwarden.eu, or a self-hosted/Vaultwarden URL). Empty = US cloud.
+                              type: string
+                          type: object
+                      type: object
+                    skills:
+                      description: SkillsSpec controls skill enablement and operator-provided
+                        custom skills.
+                      properties:
+                        creationNudgeInterval:
+                          default: 15
+                          format: int32
+                          type: integer
+                        custom:
+                          description: custom skills written into the PVC and auto-activated.
+                          items:
+                            description: CustomSkill is an operator-shipped skill
+                              written into the PVC and activated.
+                            properties:
+                              enabled:
+                                default: true
+                                type: boolean
+                              inline:
+                                description: inline is the literal SKILL.md content.
+                                  Mutually exclusive with sourceRef.
+                                type: string
+                              name:
+                                type: string
+                              sourceRef:
+                                description: |-
+                                  sourceRef references a ConfigMap or Secret holding SKILL.md (+files).
+                                  Mutually exclusive with inline.
+                                properties:
+                                  configMapName:
+                                    type: string
+                                  secretName:
+                                    type: string
+                                type: object
+                            required:
+                            - name
+                            type: object
+                          maxItems: 100
+                          type: array
+                        disabled:
+                          description: disabled globally disables bundled skills.
+                            -> skills.disabled
+                          items:
+                            type: string
+                          type: array
+                        enablePackageManagementSkill:
+                          default: true
+                          description: |-
+                            enablePackageManagementSkill ensures the built-in package-management skill
+                            is present and enabled.
+                          type: boolean
+                        externalDirs:
+                          description: externalDirs are read-only external skill dirs.
+                            -> skills.external_dirs
+                          items:
+                            type: string
+                          type: array
+                        platformDisabled:
+                          additionalProperties:
+                            items:
+                              type: string
+                            type: array
+                          description: platformDisabled disables skills per platform.
+                            -> skills.platform_disabled
+                          type: object
+                      type: object
+                    soul:
+                      description: |-
+                        soul renders to this profile's SOUL.md (persona; also the discovery marker
+                        for named profiles).
+                      type: string
+                  required:
+                  - name
+                  type: object
+                  x-kubernetes-validations:
+                  - message: each skills.custom entry must set exactly one of sourceRef
+                      or inline
+                    rule: '!has(self.skills) || !has(self.skills.custom) || self.skills.custom.all(s,
+                      has(s.sourceRef) != has(s.inline))'
+                  - message: each mcp.servers entry must set exactly one of command
+                      (stdio) or url (http/sse)
+                    rule: '!has(self.mcp) || !has(self.mcp.servers) || self.mcp.servers.all(s,
+                      has(s.command) != has(s.url))'
+                  - message: mcp.servers transport=stdio requires command; transport=http/sse
+                      requires url
+                    rule: '!has(self.mcp) || !has(self.mcp.servers) || self.mcp.servers.all(s,
+                      !has(s.transport) || (s.transport == ''stdio'' ? has(s.command)
+                      : has(s.url)))'
+                  - message: mcp.servers tools must set at most one of include or
+                      exclude
+                    rule: '!has(self.mcp) || !has(self.mcp.servers) || self.mcp.servers.all(s,
+                      !has(s.tools) || !(has(s.tools.include) && has(s.tools.exclude)))'
+                  - message: secrets.bitwarden.enabled requires accessTokenSecretRef
+                    rule: '!has(self.secrets) || !has(self.secrets.bitwarden) || !has(self.secrets.bitwarden.enabled)
+                      || !self.secrets.bitwarden.enabled || has(self.secrets.bitwarden.accessTokenSecretRef)'
+                maxItems: 50
+                type: array
+                x-kubernetes-list-map-keys:
+                - name
+                x-kubernetes-list-type: map
               replicas:
                 default: 1
                 description: replicas must be 0 (paused) or 1 (running) — the gateway
@@ -9669,227 +10832,6 @@ spec:
                   for its cont-init bootstrap and then drops the hermes process to hermesUID
                   via s6-setuidgid.
                 type: boolean
-              runtime:
-                description: RuntimeSpec selects the tool/code execution backend.
-                properties:
-                  codeExecution:
-                    description: CodeExecutionSpec renders into config.yaml `code_execution:`.
-                    properties:
-                      maxToolCalls:
-                        format: int32
-                        type: integer
-                      timeout:
-                        format: int32
-                        type: integer
-                    type: object
-                  delegation:
-                    description: DelegationSpec renders into config.yaml `delegation:`.
-                    properties:
-                      maxConcurrentChildren:
-                        format: int32
-                        type: integer
-                      maxIterations:
-                        format: int32
-                        type: integer
-                    type: object
-                  docker:
-                    description: |-
-                      DockerRuntimeSpec configures the Docker-in-Docker sidecar the operator injects
-                      when runtime.terminalBackend is docker (§11.2).
-                    properties:
-                      image:
-                        default: docker:27-dind
-                        type: string
-                      mountCwdToWorkspace:
-                        default: false
-                        type: boolean
-                      resources:
-                        description: ResourceRequirements describes the compute resource
-                          requirements.
-                        properties:
-                          claims:
-                            description: |-
-                              Claims lists the names of resources, defined in spec.resourceClaims,
-                              that are used by this container.
-
-                              This field depends on the
-                              DynamicResourceAllocation feature gate.
-
-                              This field is immutable. It can only be set for containers.
-                            items:
-                              description: ResourceClaim references one entry in PodSpec.ResourceClaims.
-                              properties:
-                                name:
-                                  description: |-
-                                    Name must match the name of one entry in pod.spec.resourceClaims of
-                                    the Pod where this field is used. It makes that resource available
-                                    inside a container.
-                                  type: string
-                                request:
-                                  description: |-
-                                    Request is the name chosen for a request in the referenced claim.
-                                    If empty, everything from the claim is made available, otherwise
-                                    only the result of this request.
-                                  type: string
-                              required:
-                              - name
-                              type: object
-                            type: array
-                            x-kubernetes-list-map-keys:
-                            - name
-                            x-kubernetes-list-type: map
-                          limits:
-                            additionalProperties:
-                              anyOf:
-                              - type: integer
-                              - type: string
-                              pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
-                              x-kubernetes-int-or-string: true
-                            description: |-
-                              Limits describes the maximum amount of compute resources allowed.
-                              More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
-                            type: object
-                          requests:
-                            additionalProperties:
-                              anyOf:
-                              - type: integer
-                              - type: string
-                              pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
-                              x-kubernetes-int-or-string: true
-                            description: |-
-                              Requests describes the minimum amount of compute resources required.
-                              If Requests is omitted for a container, it defaults to Limits if that is explicitly specified,
-                              otherwise to an implementation-defined value. Requests cannot exceed Limits.
-                              More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
-                            type: object
-                        type: object
-                      rootless:
-                        default: false
-                        type: boolean
-                      socketTransport:
-                        default: unix
-                        enum:
-                        - unix
-                        - tcp
-                        type: string
-                      storage:
-                        description: |-
-                          DockerRuntimeStorage sizes the dind image/layer store (a subPath on the
-                          shared PVC).
-                        properties:
-                          size:
-                            anyOf:
-                            - type: integer
-                            - type: string
-                            pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
-                            x-kubernetes-int-or-string: true
-                        type: object
-                    type: object
-                  installDeps:
-                    default: true
-                    description: |-
-                      installDeps, when true (default), pre-installs the terminal backend's deps
-                      onto the shared PVC at startup — the pip SDKs for modal/daytona, or
-                      Apptainer for singularity (none are bundled). Set false to rely on hermes'
-                      runtime lazy-install instead.
-                    type: boolean
-                  singularity:
-                    description: |-
-                      SingularityRuntimeSpec configures the Apptainer install for the singularity
-                      terminal backend (the binary is not bundled and is not a simple pip/apt
-                      package, so the operator runs Apptainer's official unprivileged, relocatable
-                      installer into the shared PVC). NOTE: running containers still requires the
-                      node to allow unprivileged user namespaces.
-                    properties:
-                      installImage:
-                        default: rockylinux:9
-                        description: |-
-                          installImage is the image for the Apptainer install init container. It must
-                          provide curl, rpm2cpio, and cpio (the unprivileged installer needs them) —
-                          the default is a RHEL-family image that ships all three.
-                        type: string
-                    type: object
-                  terminalBackend:
-                    default: local
-                    description: terminalBackend selects where tools run. -> terminal.backend
-                    enum:
-                    - local
-                    - docker
-                    - ssh
-                    - modal
-                    - daytona
-                    - singularity
-                    type: string
-                  terminalTimeout:
-                    description: terminalTimeout -> terminal.timeout
-                    format: int32
-                    type: integer
-                type: object
-              searxng:
-                description: |-
-                  searxng wires a self-hosted SearXNG instance for free web search (sets
-                  SEARXNG_URL on the agent).
-                properties:
-                  url:
-                    description: url is the SearXNG base URL; renders to the SEARXNG_URL
-                      env.
-                    type: string
-                type: object
-              secrets:
-                description: secrets wires external secret managers (config.yaml `secrets`).
-                properties:
-                  bitwarden:
-                    description: bitwarden syncs secrets from Bitwarden Secrets Manager
-                      (config.yaml `secrets.bitwarden`).
-                    properties:
-                      accessTokenEnv:
-                        description: accessTokenEnv names the env var holding the
-                          access token (hermes default BWS_ACCESS_TOKEN).
-                        type: string
-                      accessTokenSecretRef:
-                        description: |-
-                          accessTokenSecretRef supplies the machine-account access token, injected as the
-                          env var named by accessTokenEnv. Required when enabled.
-                        properties:
-                          key:
-                            description: key within the Secret holding the value.
-                            type: string
-                          name:
-                            description: name of the Secret.
-                            type: string
-                        required:
-                        - key
-                        - name
-                        type: object
-                      autoInstall:
-                        description: autoInstall lets the agent download the bws binary
-                          on demand (hermes default true).
-                        type: boolean
-                      cacheTTLSeconds:
-                        description: cacheTTLSeconds caps how long fetched secrets
-                          are cached in-process (hermes default 300).
-                        format: int32
-                        type: integer
-                      enabled:
-                        description: enabled turns on Bitwarden secret sync (hermes
-                          default false).
-                        type: boolean
-                      overrideExisting:
-                        description: |-
-                          overrideExisting lets Bitwarden values replace existing env vars (hermes default true).
-                          (The access token var is never overwritten by hermes.)
-                        type: boolean
-                      projectID:
-                        description: projectID is the Bitwarden project UUID to sync
-                          from.
-                        type: string
-                      serverURL:
-                        description: |-
-                          serverURL points bws at a custom region or self-hosted instance
-                          (e.g. https://vault.bitwarden.eu, or a self-hosted/Vaultwarden URL). Empty = US cloud.
-                        type: string
-                    type: object
-                type: object
               serviceAccount:
                 description: ServiceAccountSpec configures the SA the agent pod +
                   reloader run as.
@@ -9922,72 +10864,6 @@ spec:
                 description: shmSize sizes the /dev/shm emptyDir for browser tools.
                 pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
                 x-kubernetes-int-or-string: true
-              skills:
-                description: SkillsSpec controls skill enablement and operator-provided
-                  custom skills.
-                properties:
-                  creationNudgeInterval:
-                    default: 15
-                    format: int32
-                    type: integer
-                  custom:
-                    description: custom skills written into the PVC and auto-activated.
-                    items:
-                      description: CustomSkill is an operator-shipped skill written
-                        into the PVC and activated.
-                      properties:
-                        enabled:
-                          default: true
-                          type: boolean
-                        inline:
-                          description: inline is the literal SKILL.md content. Mutually
-                            exclusive with sourceRef.
-                          type: string
-                        name:
-                          type: string
-                        sourceRef:
-                          description: |-
-                            sourceRef references a ConfigMap or Secret holding SKILL.md (+files).
-                            Mutually exclusive with inline.
-                          properties:
-                            configMapName:
-                              type: string
-                            secretName:
-                              type: string
-                          type: object
-                      required:
-                      - name
-                      type: object
-                    type: array
-                  disabled:
-                    description: disabled globally disables bundled skills. -> skills.disabled
-                    items:
-                      type: string
-                    type: array
-                  enablePackageManagementSkill:
-                    default: true
-                    description: |-
-                      enablePackageManagementSkill ensures the built-in package-management skill
-                      is present and enabled.
-                    type: boolean
-                  externalDirs:
-                    description: externalDirs are read-only external skill dirs. ->
-                      skills.external_dirs
-                    items:
-                      type: string
-                    type: array
-                  platformDisabled:
-                    additionalProperties:
-                      items:
-                        type: string
-                      type: array
-                    description: platformDisabled disables skills per platform. ->
-                      skills.platform_disabled
-                    type: object
-                type: object
-              soul:
-                description: soul renders to /opt/data/SOUL.md (agent persona).
-                type: string
               storage:
                 description: StorageSpec configures the single shared PVC. See specification
                   §4.
@@ -10041,13 +10917,11 @@ spec:
                 && size(self.ingress.host) != 0)))'
             - message: channel ingress.enabled requires a host (channels[].ingress.host
                 or spec.ingress.host)
-              rule: '!has(self.channels) || self.channels.all(c, !has(c.ingress) ||
-                !c.ingress.enabled || ((has(c.ingress.host) && size(c.ingress.host)
-                != 0) || (has(self.ingress.host) && size(self.ingress.host) != 0)))'
-            - message: each skills.custom entry must set exactly one of sourceRef
-                or inline
-              rule: '!has(self.skills) || !has(self.skills.custom) || self.skills.custom.all(s,
-                has(s.sourceRef) != (has(s.inline) && size(s.inline) != 0))'
+              rule: (!has(self.defaultProfile.channels) || self.defaultProfile.channels.all(c,
+                !has(c.ingress) || !c.ingress.enabled || has(c.ingress.host) || has(self.ingress.host)))
+                && (!has(self.profiles) || self.profiles.all(p, !has(p.channels) ||
+                p.channels.all(c, !has(c.ingress) || !c.ingress.enabled || has(c.ingress.host)
+                || has(self.ingress.host))))
             - message: serviceAccount.name is required when serviceAccount.create
                 is false
               rule: self.serviceAccount.create || (has(self.serviceAccount.name) &&
@@ -10056,23 +10930,9 @@ spec:
                 must not be false)
               rule: '!has(self.kubeconfig) || !self.kubeconfig.enabled || !has(self.serviceAccount.automountToken)
                 || self.serviceAccount.automountToken'
-            - message: each mcp.servers entry must set exactly one of command (stdio)
-                or url (http/sse)
-              rule: '!has(self.mcp) || !has(self.mcp.servers) || self.mcp.servers.all(s,
-                (has(s.command) && size(s.command) != 0) != (has(s.url) && size(s.url)
-                != 0))'
-            - message: mcp.servers transport=stdio requires command; transport=http/sse
-                requires url
-              rule: '!has(self.mcp) || !has(self.mcp.servers) || self.mcp.servers.all(s,
-                !has(s.transport) || (s.transport == ''stdio'' ? (has(s.command) &&
-                size(s.command) != 0) : (has(s.url) && size(s.url) != 0)))'
-            - message: mcp.servers tools must set at most one of include or exclude
-              rule: '!has(self.mcp) || !has(self.mcp.servers) || self.mcp.servers.all(s,
-                !has(s.tools) || !((has(s.tools.include) && size(s.tools.include)
-                != 0) && (has(s.tools.exclude) && size(s.tools.exclude) != 0)))'
-            - message: secrets.bitwarden.enabled requires accessTokenSecretRef
-              rule: '!has(self.secrets) || !has(self.secrets.bitwarden) || !has(self.secrets.bitwarden.enabled)
-                || !self.secrets.bitwarden.enabled || has(self.secrets.bitwarden.accessTokenSecretRef)'
+            - message: profiles[].name must not be a reserved hermes profile name
+                (hermes/default/test/tmp/root/sudo)
+              rule: '!has(self.profiles) || self.profiles.all(p, !(p.name in [''hermes'',''default'',''test'',''tmp'',''root'',''sudo'']))'
           status:
             description: HermesAgentStatus defines the observed state of HermesAgent.
             properties:
@@ -10167,6 +11027,29 @@ spec:
                 - Failed
                 - Paused
                 type: string
+              profiles:
+                description: profiles reports the hosted named profiles (spec.profiles).
+                items:
+                  description: ProfileStatus reports the reconciled state of one hosted
+                    profile.
+                  properties:
+                    enabled:
+                      description: enabled mirrors whether the profile's gateway is
+                        set to auto-start.
+                      type: boolean
+                    home:
+                      description: home is the profile's $HERMES_HOME directory on
+                        the shared PVC.
+                      type: string
+                    name:
+                      type: string
+                  required:
+                  - name
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - name
+                x-kubernetes-list-type: map
               readyReplicas:
                 format: int32
                 type: integer

@@ -58,6 +58,7 @@ type reloader struct {
 	skillSrcDir    string
 	brewPackages   []string
 	customSkills   []string
+	profileHomes   []string
 	k8s            client.Client
 }
 
@@ -73,6 +74,7 @@ func main() {
 		skillSrcDir:    envOr("RELOADER_SKILL_SRC_DIR", "/etc/hermes-skills"),
 		brewPackages:   splitNonEmpty(os.Getenv("RELOADER_BREW_PACKAGES"), " "),
 		customSkills:   splitNonEmpty(os.Getenv("RELOADER_CUSTOM_SKILLS"), ","),
+		profileHomes:   splitNonEmpty(os.Getenv("RELOADER_PROFILE_HOMES"), ","),
 	}
 
 	// Best-effort API client for status write-back; the reloader still applies
@@ -113,7 +115,11 @@ func (r *reloader) reconcile(ctx context.Context) {
 	if err := r.materializeSkills(); err != nil {
 		log.Error(err, "skill materialization failed")
 	}
-	synced := r.syncSkills(ctx)
+	synced := r.syncSkills(ctx, r.hermesHome)
+	// Named profiles are independent agent homes; seed bundled skills in each too.
+	for _, home := range r.profileHomes {
+		r.syncSkills(ctx, home)
+	}
 
 	r.writeStatus(ctx, installed, synced)
 }
@@ -205,18 +211,18 @@ func (r *reloader) materializeSkills() error {
 	return nil
 }
 
-// syncSkills runs the upstream skills_sync.py to seed bundled skills and returns
-// the count of skill directories present.
-func (r *reloader) syncSkills(ctx context.Context) int {
+// syncSkills runs the upstream skills_sync.py to seed bundled skills for the given
+// HERMES_HOME and returns the count of skill directories present there.
+func (r *reloader) syncSkills(ctx context.Context, home string) int {
 	syncScript := "/opt/hermes/tools/skills_sync.py"
 	if _, err := os.Stat(syncScript); err == nil {
 		cmd := exec.CommandContext(ctx, "python3", syncScript)
-		cmd.Env = append(os.Environ(), "HERMES_HOME="+r.hermesHome)
+		cmd.Env = append(os.Environ(), "HERMES_HOME="+home)
 		if err := runLogged(cmd, "skills-sync"); err != nil {
-			log.Error(err, "skills_sync.py failed")
+			log.Error(err, "skills_sync.py failed", "home", home)
 		}
 	}
-	entries, err := os.ReadDir(filepath.Join(r.hermesHome, "skills"))
+	entries, err := os.ReadDir(filepath.Join(home, "skills"))
 	if err != nil {
 		return 0
 	}

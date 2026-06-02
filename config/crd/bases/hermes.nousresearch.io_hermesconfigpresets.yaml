@@ -124,11 +124,12 @@ spec:
                     format: int64
                     type: integer
                   provider:
-                    default: auto
                     description: |-
                       provider routing mode (e.g. auto), or the name of a customProviders entry to
                       make it the active provider — the operator then fills base_url/api_mode from
-                      that entry, so they aren't repeated here. -> model.provider
+                      that entry, so they aren't repeated here. Defaults to hermes' own default when
+                      unset (left undefaulted here so named profiles can inherit a custom provider
+                      from spec.defaultProfile). -> model.provider
                     type: string
                   providers:
                     description: |-
@@ -272,6 +273,7 @@ spec:
                       required:
                       - name
                       type: object
+                    maxItems: 100
                     type: array
                   disabled:
                     description: disabled globally disables bundled skills. -> skills.disabled

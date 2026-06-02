@@ -56,14 +56,23 @@ current-context: %[2]s
 }
 
 // ConfigMap builds the ConfigMap holding the rendered config.yaml and (if set)
-// SOUL.md, plus the kubeconfig when spec.kubeconfig.enabled. The init container
-// copies these onto the writable PVC at boot.
-func ConfigMap(a *hermesv1alpha1.HermesAgent, configYAML []byte, soul string) *corev1.ConfigMap {
+// SOUL.md for the default profile, plus each named profile's rendered config.yaml
+// / SOUL.md (flat keys), plus the kubeconfig when spec.kubeconfig.enabled. The
+// init container copies these onto the writable PVC at boot. profileConfigs and
+// profileSouls are keyed by profile name; a profile's SOUL.md is always emitted
+// (it is the upstream discovery marker).
+func ConfigMap(a *hermesv1alpha1.HermesAgent, configYAML []byte, soul string, profileConfigs map[string][]byte, profileSouls map[string]string) *corev1.ConfigMap {
 	data := map[string]string{
 		"config.yaml": string(configYAML),
 	}
 	if soul != "" {
 		data["SOUL.md"] = soul
+	}
+	for _, p := range a.Spec.Profiles {
+		if cfg, ok := profileConfigs[p.Name]; ok {
+			data[ProfileConfigKey(p.Name)] = string(cfg)
+		}
+		data[ProfileSoulKey(p.Name)] = ProfileSoulContent(p, profileSouls[p.Name])
 	}
 	if a.Spec.Kubeconfig.Enabled {
 		data[KubeConfigKey] = KubeconfigYAML(a)
@@ -78,12 +87,22 @@ func ConfigMap(a *hermesv1alpha1.HermesAgent, configYAML []byte, soul string) *c
 	}
 }
 
+// ProfileSoulContent returns the SOUL.md body to write for a profile, falling
+// back to a minimal stub when none is rendered — the file must exist for the
+// upstream image to discover and register the profile's gateway.
+func ProfileSoulContent(p hermesv1alpha1.ProfileSpec, soul string) string {
+	if soul != "" {
+		return soul
+	}
+	return "# " + p.Name + "\n"
+}
+
 // SkillConfigMaps builds one ConfigMap per inline custom skill (SKILL.md). For
 // skills sourced from an existing ConfigMap/Secret (sourceRef), the reloader
 // reads that object directly and no ConfigMap is rendered here.
 func SkillConfigMaps(a *hermesv1alpha1.HermesAgent) []*corev1.ConfigMap {
 	var out []*corev1.ConfigMap
-	for _, s := range a.Spec.Skills.Custom {
+	for _, s := range a.Spec.DefaultProfile.Skills.Custom {
 		if s.Inline == "" {
 			continue
 		}

@@ -25,7 +25,7 @@ func TestKubeconfigEnabledRendersConfigMapAndInit(t *testing.T) {
 	a := baseAgent() // namespace "default", name "research-bot"
 	a.Spec.Kubeconfig.Enabled = true
 
-	cm := ConfigMap(a, []byte("model: {}\n"), "")
+	cm := ConfigMap(a, []byte("model: {}\n"), "", nil, nil)
 	kc, ok := cm.Data[KubeConfigKey]
 	if !ok {
 		t.Fatalf("ConfigMap missing %q key when kubeconfig enabled", KubeConfigKey)
@@ -58,7 +58,7 @@ func TestKubeconfigEnabledRendersConfigMapAndInit(t *testing.T) {
 
 func TestKubeconfigDisabledByDefault(t *testing.T) {
 	a := baseAgent()
-	cm := ConfigMap(a, []byte("x: y\n"), "")
+	cm := ConfigMap(a, []byte("x: y\n"), "", nil, nil)
 	if _, ok := cm.Data[KubeConfigKey]; ok {
 		t.Errorf("ConfigMap has %q key when kubeconfig disabled", KubeConfigKey)
 	}

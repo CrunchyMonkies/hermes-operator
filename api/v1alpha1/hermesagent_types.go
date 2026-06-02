@@ -20,7 +20,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
 )
 
 // HermesAgentSpec defines the desired state of a single Hermes gateway. One CR
@@ -32,14 +31,10 @@ import (
 // +kubebuilder:validation:XValidation:rule="self.probes.mode != 'http' || self.apiServer.enabled",message="probes.mode=http requires apiServer.enabled"
 // +kubebuilder:validation:XValidation:rule="!self.ingress.enabled || (self.dashboard.enabled && has(self.ingress.host) && size(self.ingress.host) != 0)",message="ingress.enabled requires dashboard.enabled and ingress.host"
 // +kubebuilder:validation:XValidation:rule="!has(self.apiServer.ingress) || !self.apiServer.ingress.enabled || (self.apiServer.enabled && ((has(self.apiServer.ingress.host) && size(self.apiServer.ingress.host) != 0) || (has(self.ingress.host) && size(self.ingress.host) != 0)))",message="apiServer.ingress.enabled requires apiServer.enabled and a host (apiServer.ingress.host or spec.ingress.host)"
-// +kubebuilder:validation:XValidation:rule="!has(self.channels) || self.channels.all(c, !has(c.ingress) || !c.ingress.enabled || ((has(c.ingress.host) && size(c.ingress.host) != 0) || (has(self.ingress.host) && size(self.ingress.host) != 0)))",message="channel ingress.enabled requires a host (channels[].ingress.host or spec.ingress.host)"
-// +kubebuilder:validation:XValidation:rule="!has(self.skills) || !has(self.skills.custom) || self.skills.custom.all(s, has(s.sourceRef) != (has(s.inline) && size(s.inline) != 0))",message="each skills.custom entry must set exactly one of sourceRef or inline"
+// +kubebuilder:validation:XValidation:rule="(!has(self.defaultProfile.channels) || self.defaultProfile.channels.all(c, !has(c.ingress) || !c.ingress.enabled || has(c.ingress.host) || has(self.ingress.host))) && (!has(self.profiles) || self.profiles.all(p, !has(p.channels) || p.channels.all(c, !has(c.ingress) || !c.ingress.enabled || has(c.ingress.host) || has(self.ingress.host))))",message="channel ingress.enabled requires a host (channels[].ingress.host or spec.ingress.host)"
 // +kubebuilder:validation:XValidation:rule="self.serviceAccount.create || (has(self.serviceAccount.name) && size(self.serviceAccount.name) != 0)",message="serviceAccount.name is required when serviceAccount.create is false"
 // +kubebuilder:validation:XValidation:rule="!has(self.kubeconfig) || !self.kubeconfig.enabled || !has(self.serviceAccount.automountToken) || self.serviceAccount.automountToken",message="kubeconfig.enabled requires the ServiceAccount token (serviceAccount.automountToken must not be false)"
-// +kubebuilder:validation:XValidation:rule="!has(self.mcp) || !has(self.mcp.servers) || self.mcp.servers.all(s, (has(s.command) && size(s.command) != 0) != (has(s.url) && size(s.url) != 0))",message="each mcp.servers entry must set exactly one of command (stdio) or url (http/sse)"
-// +kubebuilder:validation:XValidation:rule="!has(self.mcp) || !has(self.mcp.servers) || self.mcp.servers.all(s, !has(s.transport) || (s.transport == 'stdio' ? (has(s.command) && size(s.command) != 0) : (has(s.url) && size(s.url) != 0)))",message="mcp.servers transport=stdio requires command; transport=http/sse requires url"
-// +kubebuilder:validation:XValidation:rule="!has(self.mcp) || !has(self.mcp.servers) || self.mcp.servers.all(s, !has(s.tools) || !((has(s.tools.include) && size(s.tools.include) != 0) && (has(s.tools.exclude) && size(s.tools.exclude) != 0)))",message="mcp.servers tools must set at most one of include or exclude"
-// +kubebuilder:validation:XValidation:rule="!has(self.secrets) || !has(self.secrets.bitwarden) || !has(self.secrets.bitwarden.enabled) || !self.secrets.bitwarden.enabled || has(self.secrets.bitwarden.accessTokenSecretRef)",message="secrets.bitwarden.enabled requires accessTokenSecretRef"
+// +kubebuilder:validation:XValidation:rule="!has(self.profiles) || self.profiles.all(p, !(p.name in ['hermes','default','test','tmp','root','sudo']))",message="profiles[].name must not be a reserved hermes profile name (hermes/default/test/tmp/root/sudo)"
 type HermesAgentSpec struct {
 	// image is the agent container image (the operator's derived image with brew).
 	// +required
@@ -54,34 +49,23 @@ type HermesAgentSpec struct {
 	// +optional
 	PresetRef *PresetRef `json:"presetRef,omitempty"`
 
-	// soul renders to /opt/data/SOUL.md (agent persona).
+	// defaultProfile is the implicit "default" hermes profile at $HERMES_HOME
+	// (/opt/data) — the agent the main container runs via `gateway run`. It uses the
+	// shared ProfileConfig, the SAME object as each spec.profiles[] entry.
 	// +optional
-	Soul string `json:"soul,omitempty"`
+	DefaultProfile ProfileConfig `json:"defaultProfile,omitempty"`
 
+	// profiles declares additional hermes profiles hosted in the same pod: each is
+	// a complete, independent agent instance (own config.yaml/SOUL.md/model/skills/
+	// memory/sessions/channels and its OWN gateway process and bot token) rendered
+	// under $HERMES_HOME/profiles/<name>/, auto-started in-pod by the upstream
+	// image. A profile's config sections override defaultProfile; unset sections
+	// inherit it.
 	// +optional
-	Model ModelSpec `json:"model,omitempty"`
-	// +optional
-	Agent AgentSpec `json:"agent,omitempty"`
-	// +optional
-	Compression CompressionSpec `json:"compression,omitempty"`
-	// +optional
-	Memory MemorySpec `json:"memory,omitempty"`
-	// searxng wires a self-hosted SearXNG instance for free web search (sets
-	// SEARXNG_URL on the agent).
-	// +optional
-	Searxng SearxngSpec `json:"searxng,omitempty"`
-	// honcho wires cross-session user modeling via a Honcho instance (sets
-	// HONCHO_BASE_URL and, if set, HONCHO_API_KEY on the agent).
-	// +optional
-	Honcho HonchoSpec `json:"honcho,omitempty"`
-
-	// mcp configures Model Context Protocol servers (config.yaml `mcp_servers`).
-	// +optional
-	MCP MCPSpec `json:"mcp,omitempty"`
-
-	// secrets wires external secret managers (config.yaml `secrets`).
-	// +optional
-	Secrets SecretsSpec `json:"secrets,omitempty"`
+	// +listType=map
+	// +listMapKey=name
+	// +kubebuilder:validation:MaxItems=50
+	Profiles []ProfileSpec `json:"profiles,omitempty"`
 
 	// ingress is the agent's single, shared Ingress configuration. Its host,
 	// className, annotations, tls, and pathType are the defaults for every HTTP
@@ -97,15 +81,10 @@ type HermesAgentSpec struct {
 	// +optional
 	Dashboard DashboardSpec `json:"dashboard,omitempty"`
 
-	// +optional
-	Channels []ChannelSpec `json:"channels,omitempty"`
-
-	// +optional
-	Skills SkillsSpec `json:"skills,omitempty"`
+	// packages declares runtime package installation onto the shared PVC (pip/brew),
+	// shared by all profiles in the pod.
 	// +optional
 	Packages PackagesSpec `json:"packages,omitempty"`
-	// +optional
-	Runtime RuntimeSpec `json:"runtime,omitempty"`
 	// +optional
 	Cron CronSpec `json:"cron,omitempty"`
 
@@ -121,16 +100,6 @@ type HermesAgentSpec struct {
 
 	// +optional
 	ServiceAccount ServiceAccountSpec `json:"serviceAccount,omitempty"`
-
-	// extraConfig is deep-merged into config.yaml (free-form, preserved verbatim).
-	// +kubebuilder:pruning:PreserveUnknownFields
-	// +optional
-	ExtraConfig *runtime.RawExtension `json:"extraConfig,omitempty"`
-	// extraConfigPrecedence controls whether extraConfig merges or overrides.
-	// +kubebuilder:validation:Enum=merge;override
-	// +kubebuilder:default=merge
-	// +optional
-	ExtraConfigPrecedence string `json:"extraConfigPrecedence,omitempty"`
 
 	// +optional
 	Storage StorageSpec `json:"storage,omitempty"`
@@ -185,6 +154,19 @@ type HermesAgentSpec struct {
 	Kubeconfig KubeconfigSpec `json:"kubeconfig,omitempty"`
 }
 
+// AllProfileConfigs returns every profile's config in the pod: the default
+// profile first, then each named profile (its config un-resolved — inheritance is
+// applied at render time by the controller). Useful for pod-level unions (pip
+// deps, dind injection, webhook port allocation).
+func (s *HermesAgentSpec) AllProfileConfigs() []ProfileConfig {
+	out := make([]ProfileConfig, 0, 1+len(s.Profiles))
+	out = append(out, s.DefaultProfile)
+	for _, p := range s.Profiles {
+		out = append(out, p.ProfileConfig)
+	}
+	return out
+}
+
 // EndpointsStatus reports the in-cluster service endpoints.
 type EndpointsStatus struct {
 	// +optional
@@ -209,6 +191,18 @@ type PackagesStatus struct {
 	BrewInstalled []string `json:"brewInstalled,omitempty"`
 }
 
+// ProfileStatus reports the reconciled state of one hosted profile.
+type ProfileStatus struct {
+	// +required
+	Name string `json:"name"`
+	// home is the profile's $HERMES_HOME directory on the shared PVC.
+	// +optional
+	Home string `json:"home,omitempty"`
+	// enabled mirrors whether the profile's gateway is set to auto-start.
+	// +optional
+	Enabled bool `json:"enabled,omitempty"`
+}
+
 // HermesAgentStatus defines the observed state of HermesAgent.
 type HermesAgentStatus struct {
 	// phase is a coarse lifecycle summary.
@@ -229,6 +223,11 @@ type HermesAgentStatus struct {
 	Skills SkillsStatus `json:"skills,omitempty"`
 	// +optional
 	Packages PackagesStatus `json:"packages,omitempty"`
+	// profiles reports the hosted named profiles (spec.profiles).
+	// +listType=map
+	// +listMapKey=name
+	// +optional
+	Profiles []ProfileStatus `json:"profiles,omitempty"`
 	// +listType=map
 	// +listMapKey=type
 	// +optional

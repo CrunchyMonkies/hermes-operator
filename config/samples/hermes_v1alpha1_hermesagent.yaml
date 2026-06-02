@@ -10,23 +10,54 @@ spec:
   imagePullSecrets:
     - name: harbor-pull
 
-  soul: |
-    You are a focused research assistant.
+  # The default profile: the agent the main container runs at $HERMES_HOME. It
+  # uses the shared ProfileConfig — the same object as each entry under profiles[].
+  defaultProfile:
+    soul: |
+      You are a focused research assistant.
+    model:
+      default: anthropic/claude-opus-4.6
+      provider: auto
+    agent:
+      maxTurns: 60
+      reasoningEffort: medium
+    compression:
+      enabled: true
+      threshold: "0.50"
+      targetRatio: "0.20"
+      protectLastN: 20
+    memory:
+      memoryEnabled: true
+      userProfileEnabled: true
+    channels:
+      - type: telegram
+        enabled: true
+        secretRef: { name: research-bot-secrets }
+        webhookPort: 0
+    skills:
+      disabled: []
+      enablePackageManagementSkill: true
+    runtime:
+      terminalBackend: local
+      terminalTimeout: 180
+      codeExecution:
+        timeout: 300
+        maxToolCalls: 50
 
-  model:
-    default: anthropic/claude-opus-4.6
-    provider: auto
-  agent:
-    maxTurns: 60
-    reasoningEffort: medium
-  compression:
-    enabled: true
-    threshold: "0.50"
-    targetRatio: "0.20"
-    protectLastN: 20
-  memory:
-    memoryEnabled: true
-    userProfileEnabled: true
+  # Additional profiles: each a complete, independent agent instance in the SAME
+  # pod (own gateway + bot token), inheriting any defaultProfile section it omits.
+  # Per-profile bot tokens live in the profile's .env, supplied via envSecretRef.
+  profiles:
+    - name: support
+      soul: |
+        You are a friendly customer-support agent.
+      model:
+        default: anthropic/claude-haiku-4.5
+      channels:
+        - type: telegram
+          enabled: true
+      # profiles/support/.env (e.g. TELEGRAM_BOT_TOKEN=...) — loaded with override.
+      envSecretRef: { name: support-bot-env, key: .env }
 
   apiServer:
     enabled: true
@@ -48,25 +79,8 @@ spec:
         - secretName: research-bot-api-tls
           hosts: [api.research-bot.example.com]
 
-  channels:
-    - type: telegram
-      enabled: true
-      secretRef: { name: research-bot-secrets }
-      webhookPort: 0
-
-  skills:
-    disabled: []
-    enablePackageManagementSkill: true
-
   packages:
     brew: [gh, fd]
-
-  runtime:
-    terminalBackend: local
-    terminalTimeout: 180
-    codeExecution:
-      timeout: 300
-      maxToolCalls: 50
 
   envFrom:
     - secretRef: { name: research-bot-secrets }
