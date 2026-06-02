@@ -159,9 +159,9 @@ var _ = Describe("HermesAgent Controller", func() {
 			a := &hermesv1alpha1.HermesAgent{
 				ObjectMeta: metav1.ObjectMeta{Name: "bad-mcp-none", Namespace: "default"},
 				Spec: hermesv1alpha1.HermesAgentSpec{
-					Image:   "img:v1",
-					Storage: hermesv1alpha1.StorageSpec{Size: &size},
-					MCP:     hermesv1alpha1.MCPSpec{Servers: []hermesv1alpha1.MCPServerSpec{{Name: "x"}}},
+					Image:          "img:v1",
+					Storage:        hermesv1alpha1.StorageSpec{Size: &size},
+					DefaultProfile: hermesv1alpha1.ProfileConfig{MCP: hermesv1alpha1.MCPSpec{Servers: []hermesv1alpha1.MCPServerSpec{{Name: "x"}}}},
 				},
 			}
 			Expect(k8sClient.Create(ctx, a)).NotTo(Succeed())
@@ -173,9 +173,9 @@ var _ = Describe("HermesAgent Controller", func() {
 				Spec: hermesv1alpha1.HermesAgentSpec{
 					Image:   "img:v1",
 					Storage: hermesv1alpha1.StorageSpec{Size: &size},
-					MCP: hermesv1alpha1.MCPSpec{Servers: []hermesv1alpha1.MCPServerSpec{
+					DefaultProfile: hermesv1alpha1.ProfileConfig{MCP: hermesv1alpha1.MCPSpec{Servers: []hermesv1alpha1.MCPServerSpec{
 						{Name: "x", Command: "npx", URL: "https://mcp/x"},
-					}},
+					}}},
 				},
 			}
 			Expect(k8sClient.Create(ctx, a)).NotTo(Succeed())
@@ -213,7 +213,7 @@ var _ = Describe("HermesAgent Controller", func() {
 					Storage: hermesv1alpha1.StorageSpec{Size: &size},
 					Profiles: []hermesv1alpha1.ProfileSpec{
 						{Name: "staging"},
-						{Name: "support", Soul: "be helpful"},
+						{Name: "support", ProfileConfig: hermesv1alpha1.ProfileConfig{Soul: "be helpful"}},
 					},
 				},
 			}
@@ -241,10 +241,10 @@ var _ = Describe("HermesAgent Controller", func() {
 				Spec: hermesv1alpha1.HermesAgentSpec{
 					Image:   "img:v1",
 					Storage: hermesv1alpha1.StorageSpec{Size: &size},
-					MCP: hermesv1alpha1.MCPSpec{Servers: []hermesv1alpha1.MCPServerSpec{
+					DefaultProfile: hermesv1alpha1.ProfileConfig{MCP: hermesv1alpha1.MCPSpec{Servers: []hermesv1alpha1.MCPServerSpec{
 						{Name: "local", Command: "npx", Args: []string{"-y", "srv"}},
 						{Name: "remote", Transport: "sse", URL: "https://mcp/x"},
-					}},
+					}}},
 				},
 			}
 			Expect(k8sClient.Create(ctx, a)).To(Succeed())
@@ -256,9 +256,9 @@ var _ = Describe("HermesAgent Controller", func() {
 				Spec: hermesv1alpha1.HermesAgentSpec{
 					Image:   "img:v1",
 					Storage: hermesv1alpha1.StorageSpec{Size: &size},
-					Secrets: hermesv1alpha1.SecretsSpec{Bitwarden: &hermesv1alpha1.BitwardenSpec{
+					DefaultProfile: hermesv1alpha1.ProfileConfig{Secrets: hermesv1alpha1.SecretsSpec{Bitwarden: &hermesv1alpha1.BitwardenSpec{
 						Enabled: ptr.To(true),
-					}},
+					}}},
 				},
 			}
 			Expect(k8sClient.Create(ctx, a)).NotTo(Succeed())
@@ -270,11 +270,11 @@ var _ = Describe("HermesAgent Controller", func() {
 				Spec: hermesv1alpha1.HermesAgentSpec{
 					Image:   "img:v1",
 					Storage: hermesv1alpha1.StorageSpec{Size: &size},
-					Secrets: hermesv1alpha1.SecretsSpec{Bitwarden: &hermesv1alpha1.BitwardenSpec{
+					DefaultProfile: hermesv1alpha1.ProfileConfig{Secrets: hermesv1alpha1.SecretsSpec{Bitwarden: &hermesv1alpha1.BitwardenSpec{
 						Enabled:              ptr.To(true),
 						ServerURL:            "https://vault.example.com",
 						AccessTokenSecretRef: &hermesv1alpha1.SecretKeyRef{Name: "bw-creds", Key: "token"},
-					}},
+					}}},
 				},
 			}
 			Expect(k8sClient.Create(ctx, a)).To(Succeed())

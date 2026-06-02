@@ -150,8 +150,8 @@ func basePodTemplate(a *hermesv1alpha1.HermesAgent, configHash, reloaderImage st
 }
 
 func reloaderEnv(a *hermesv1alpha1.HermesAgent) []corev1.EnvVar {
-	skillNames := make([]string, 0, len(a.Spec.Skills.Custom))
-	for _, s := range a.Spec.Skills.Custom {
+	skillNames := make([]string, 0, len(a.Spec.DefaultProfile.Skills.Custom))
+	for _, s := range a.Spec.DefaultProfile.Skills.Custom {
 		skillNames = append(skillNames, s.Name)
 	}
 	env := []corev1.EnvVar{

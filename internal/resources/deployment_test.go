@@ -158,7 +158,7 @@ func TestServicePortsDerived(t *testing.T) {
 	a.Spec.APIServer.Port = APIPort
 	a.Spec.Dashboard.Enabled = true
 	a.Spec.Dashboard.Port = DashboardPort
-	a.Spec.Channels = []hermesv1alpha1.ChannelSpec{{Type: "telegram", WebhookPort: 8443}}
+	a.Spec.DefaultProfile.Channels = []hermesv1alpha1.ChannelSpec{{Type: "telegram", WebhookPort: 8443}}
 
 	svc := Service(a)
 	if svc == nil {
@@ -217,7 +217,7 @@ func findVolume(vols []corev1.Volume, name string) *corev1.Volume {
 // agent's DOCKER_HOST wiring (§11.2).
 func TestDockerBackendInjectsDindWithPVC(t *testing.T) {
 	a := baseAgent()
-	a.Spec.Runtime.TerminalBackend = "docker"
+	a.Spec.DefaultProfile.Runtime.TerminalBackend = "docker"
 
 	dep, err := Deployment(a, "sha256:abc", "")
 	if err != nil {
@@ -293,7 +293,7 @@ func TestDockerBackendInjectsDindWithPVC(t *testing.T) {
 // survives (and is re-asserted over) a podTemplate overlay (§11.2 / §3.6).
 func TestDockerBackendReassertedAfterOverlay(t *testing.T) {
 	a := baseAgent()
-	a.Spec.Runtime.TerminalBackend = "docker"
+	a.Spec.DefaultProfile.Runtime.TerminalBackend = "docker"
 	// Overlay tries to weaken dind (drop privileged) and add an unrelated sidecar.
 	a.Spec.PodTemplate = &corev1.PodTemplateSpec{
 		Spec: corev1.PodSpec{
@@ -325,9 +325,9 @@ func TestDockerBackendReassertedAfterOverlay(t *testing.T) {
 // and the tcp socket transport (no shared emptyDir).
 func TestDockerBackendRootlessAndTCP(t *testing.T) {
 	a := baseAgent()
-	a.Spec.Runtime.TerminalBackend = "docker"
-	a.Spec.Runtime.Docker.Rootless = true
-	a.Spec.Runtime.Docker.SocketTransport = "tcp"
+	a.Spec.DefaultProfile.Runtime.TerminalBackend = "docker"
+	a.Spec.DefaultProfile.Runtime.Docker.Rootless = true
+	a.Spec.DefaultProfile.Runtime.Docker.SocketTransport = "tcp"
 
 	dep, err := Deployment(a, "sha256:abc", "")
 	if err != nil {

@@ -96,23 +96,26 @@ func (r *HermesAgentReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 
 	// 3. Render config.yaml + SOUL.md + skill payloads (default profile) and each
 	//    named profile's independent config.yaml + SOUL.md.
-	configYAML, err := config.RenderConfigYAML(&agent.Spec)
+	configYAML, err := config.RenderConfigYAML(&agent.Spec.DefaultProfile, &agent.Spec)
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("render config: %w", err)
 	}
-	soul := config.RenderSoul(&agent.Spec)
+	soul := config.RenderSoul(&agent.Spec.DefaultProfile)
 	skillPayloads := inlineSkillPayloads(agent)
 
 	profileConfigs := map[string][]byte{}
 	profileSouls := map[string]string{}
 	for _, p := range agent.Spec.Profiles {
-		eff := agent.Spec.EffectiveProfileSpec(p)
-		pcfg, err := config.RenderConfigYAML(&eff)
+		resolved, err := resolveProfileConfig(agent.Spec.DefaultProfile, p.ProfileConfig)
+		if err != nil {
+			return ctrl.Result{}, fmt.Errorf("resolve profile %q: %w", p.Name, err)
+		}
+		pcfg, err := config.RenderConfigYAML(&resolved, &agent.Spec)
 		if err != nil {
 			return ctrl.Result{}, fmt.Errorf("render profile %q config: %w", p.Name, err)
 		}
 		profileConfigs[p.Name] = pcfg
-		profileSouls[p.Name] = config.RenderSoul(&eff)
+		profileSouls[p.Name] = config.RenderSoul(&resolved)
 	}
 
 	// 4. configHash (Secrets contribute resourceVersion only; never decoded).
@@ -232,7 +235,7 @@ func (r *HermesAgentReconciler) apply(ctx context.Context, owner *hermesv1alpha1
 // they participate in the configHash.
 func inlineSkillPayloads(agent *hermesv1alpha1.HermesAgent) map[string]string {
 	out := map[string]string{}
-	for _, s := range agent.Spec.Skills.Custom {
+	for _, s := range agent.Spec.DefaultProfile.Skills.Custom {
 		if s.Inline != "" {
 			out[s.Name] = s.Inline
 		}
@@ -259,7 +262,7 @@ func (r *HermesAgentReconciler) secretVersions(ctx context.Context, agent *herme
 			add(e.ValueFrom.SecretKeyRef.Name)
 		}
 	}
-	for _, ch := range agent.Spec.Channels {
+	for _, ch := range agent.Spec.DefaultProfile.Channels {
 		if ch.SecretRef != nil {
 			add(ch.SecretRef.Name)
 		}
@@ -270,12 +273,12 @@ func (r *HermesAgentReconciler) secretVersions(ctx context.Context, agent *herme
 	if agent.Spec.AuthJSONBootstrapSecretRef != nil {
 		add(agent.Spec.AuthJSONBootstrapSecretRef.Name)
 	}
-	for _, s := range agent.Spec.MCP.Servers {
+	for _, s := range agent.Spec.DefaultProfile.MCP.Servers {
 		for _, se := range s.SecretEnv {
 			add(se.SecretRef.Name)
 		}
 	}
-	if bw := agent.Spec.Secrets.Bitwarden; bw != nil && bw.AccessTokenSecretRef != nil {
+	if bw := agent.Spec.DefaultProfile.Secrets.Bitwarden; bw != nil && bw.AccessTokenSecretRef != nil {
 		add(bw.AccessTokenSecretRef.Name)
 	}
 	for _, p := range agent.Spec.Profiles {

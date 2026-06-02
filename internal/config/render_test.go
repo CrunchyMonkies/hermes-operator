@@ -40,10 +40,31 @@ func mustParse(t *testing.T, b []byte) map[string]any {
 	return out
 }
 
+// mustRender renders a profile config with an empty pod-level spec.
+func mustRender(t *testing.T, pc *hermesv1alpha1.ProfileConfig) []byte {
+	t.Helper()
+	out, err := RenderConfigYAML(pc, &hermesv1alpha1.HermesAgentSpec{})
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	return out
+}
+
+// mustRenderWith renders a profile config with pod-level context (kubeconfig,
+// packages) used by the docker-terminal volume wiring.
+func mustRenderWith(t *testing.T, pc *hermesv1alpha1.ProfileConfig, spec *hermesv1alpha1.HermesAgentSpec) []byte {
+	t.Helper()
+	out, err := RenderConfigYAML(pc, spec)
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	return out
+}
+
 func TestRenderCustomProviders(t *testing.T) {
 	// provider names the custom provider; base_url/api_mode are NOT set on model
 	// and must be derived from that provider.
-	spec := &hermesv1alpha1.HermesAgentSpec{
+	pc := &hermesv1alpha1.ProfileConfig{
 		Model: hermesv1alpha1.ModelSpec{
 			Default:  "gemma-4-e4b-it",
 			Provider: "llm",
@@ -59,7 +80,7 @@ func TestRenderCustomProviders(t *testing.T) {
 		},
 	}
 
-	got := mustParse(t, mustRender(t, spec))
+	got := mustParse(t, mustRender(t, pc))
 
 	// model.base_url / api_mode derived from the selected provider (not repeated).
 	model := got["model"].(map[string]any)
@@ -91,16 +112,16 @@ func TestRenderCustomProviders(t *testing.T) {
 	}
 
 	// An explicit model.baseURL overrides the derived value.
-	spec.Model.BaseURL = "https://override/v1"
-	got2 := mustParse(t, mustRender(t, spec))
+	pc.Model.BaseURL = "https://override/v1"
+	got2 := mustParse(t, mustRender(t, pc))
 	if got2["model"].(map[string]any)["base_url"] != "https://override/v1" {
 		t.Errorf("explicit baseURL should override derived")
 	}
 
 	// With a keySecretRef, key_env is emitted (the operator injects the key there).
-	spec.Model.BaseURL = ""
-	spec.Model.Providers[0].KeySecretRef = &hermesv1alpha1.SecretKeyRef{Name: "k", Key: "llm"}
-	got3 := mustParse(t, mustRender(t, spec))
+	pc.Model.BaseURL = ""
+	pc.Model.Providers[0].KeySecretRef = &hermesv1alpha1.SecretKeyRef{Name: "k", Key: "llm"}
+	got3 := mustParse(t, mustRender(t, pc))
 	cp3 := got3["custom_providers"].([]any)[0].(map[string]any)
 	if cp3["key_env"] != "LLM_API_KEY" {
 		t.Errorf("key_env = %v, want LLM_API_KEY", cp3["key_env"])
@@ -110,7 +131,7 @@ func TestRenderCustomProviders(t *testing.T) {
 func TestRenderBuiltinProviderNoCustomRow(t *testing.T) {
 	// A built-in provider (no baseURL) must NOT appear in custom_providers, and the
 	// operator must not synthesize a model.base_url for it (hermes knows the URL).
-	spec := &hermesv1alpha1.HermesAgentSpec{
+	pc := &hermesv1alpha1.ProfileConfig{
 		Model: hermesv1alpha1.ModelSpec{
 			Default:  "claude-opus-4-7",
 			Provider: "claude",
@@ -120,7 +141,7 @@ func TestRenderBuiltinProviderNoCustomRow(t *testing.T) {
 			}},
 		},
 	}
-	got := mustParse(t, mustRender(t, spec))
+	got := mustParse(t, mustRender(t, pc))
 	if _, ok := got["custom_providers"]; ok {
 		t.Errorf("built-in provider should not emit custom_providers: %v", got["custom_providers"])
 	}
@@ -129,17 +150,8 @@ func TestRenderBuiltinProviderNoCustomRow(t *testing.T) {
 	}
 }
 
-func mustRender(t *testing.T, spec *hermesv1alpha1.HermesAgentSpec) []byte {
-	t.Helper()
-	out, err := RenderConfigYAML(spec)
-	if err != nil {
-		t.Fatalf("render: %v", err)
-	}
-	return out
-}
-
 func TestRenderTypedKeys(t *testing.T) {
-	spec := &hermesv1alpha1.HermesAgentSpec{
+	pc := &hermesv1alpha1.ProfileConfig{
 		Model: hermesv1alpha1.ModelSpec{
 			Default:       "anthropic/claude-opus-4.6",
 			Provider:      "auto",
@@ -166,11 +178,7 @@ func TestRenderTypedKeys(t *testing.T) {
 		},
 	}
 
-	out, err := RenderConfigYAML(spec)
-	if err != nil {
-		t.Fatalf("render: %v", err)
-	}
-	got := mustParse(t, out)
+	got := mustParse(t, mustRender(t, pc))
 
 	if v, _ := got["_config_version"].(float64); int(v) != ConfigVersion {
 		t.Errorf("_config_version = %v, want %d", got["_config_version"], ConfigVersion)
@@ -217,15 +225,11 @@ func TestRenderTypedKeys(t *testing.T) {
 }
 
 func TestKubeconfigDockerVolumesRendered(t *testing.T) {
-	spec := &hermesv1alpha1.HermesAgentSpec{
-		Runtime:    hermesv1alpha1.RuntimeSpec{TerminalBackend: "docker"},
-		Kubeconfig: hermesv1alpha1.KubeconfigSpec{Enabled: true},
+	pc := &hermesv1alpha1.ProfileConfig{
+		Runtime: hermesv1alpha1.RuntimeSpec{TerminalBackend: "docker"},
 	}
-	out, err := RenderConfigYAML(spec)
-	if err != nil {
-		t.Fatalf("render: %v", err)
-	}
-	terminal := mustParse(t, out)["terminal"].(map[string]any)
+	spec := &hermesv1alpha1.HermesAgentSpec{Kubeconfig: hermesv1alpha1.KubeconfigSpec{Enabled: true}}
+	terminal := mustParse(t, mustRenderWith(t, pc, spec))["terminal"].(map[string]any)
 
 	vols, ok := terminal["docker_volumes"].([]any)
 	if !ok || len(vols) != 3 { // dind socket + kubeconfig + sa token
@@ -253,14 +257,9 @@ func TestKubeconfigDockerVolumesRendered(t *testing.T) {
 }
 
 func TestBrewMountedIntoDockerToolContainers(t *testing.T) {
-	out, err := RenderConfigYAML(&hermesv1alpha1.HermesAgentSpec{
-		Runtime:  hermesv1alpha1.RuntimeSpec{TerminalBackend: "docker"},
-		Packages: hermesv1alpha1.PackagesSpec{Brew: []string{"kubectl"}},
-	})
-	if err != nil {
-		t.Fatalf("render: %v", err)
-	}
-	terminal := mustParse(t, out)["terminal"].(map[string]any)
+	pc := &hermesv1alpha1.ProfileConfig{Runtime: hermesv1alpha1.RuntimeSpec{TerminalBackend: "docker"}}
+	spec := &hermesv1alpha1.HermesAgentSpec{Packages: hermesv1alpha1.PackagesSpec{Brew: []string{"kubectl"}}}
+	terminal := mustParse(t, mustRenderWith(t, pc, spec))["terminal"].(map[string]any)
 
 	vols := terminal["docker_volumes"].([]any)
 	if len(vols) != 2 || vols[0] != "/var/run/dind/docker.sock:/var/run/dind/docker.sock" ||
@@ -276,22 +275,20 @@ func TestBrewMountedIntoDockerToolContainers(t *testing.T) {
 		t.Errorf("docker_extra_args should be absent, got %v", terminal["docker_extra_args"])
 	}
 	// local backend -> no docker sandbox wiring at all.
-	out2, _ := RenderConfigYAML(&hermesv1alpha1.HermesAgentSpec{
-		Runtime:  hermesv1alpha1.RuntimeSpec{TerminalBackend: "local"},
-		Packages: hermesv1alpha1.PackagesSpec{Brew: []string{"kubectl"}},
-	})
+	pcLocal := &hermesv1alpha1.ProfileConfig{Runtime: hermesv1alpha1.RuntimeSpec{TerminalBackend: "local"}}
+	out2 := mustRenderWith(t, pcLocal, spec)
 	if _, ok := mustParse(t, out2)["terminal"].(map[string]any)["docker_volumes"]; ok {
 		t.Error("no docker_volumes for local backend")
 	}
 }
 
 func TestKubeconfigAndBrewDockerEnvMerge(t *testing.T) {
-	out, _ := RenderConfigYAML(&hermesv1alpha1.HermesAgentSpec{
-		Runtime:    hermesv1alpha1.RuntimeSpec{TerminalBackend: "docker"},
+	pc := &hermesv1alpha1.ProfileConfig{Runtime: hermesv1alpha1.RuntimeSpec{TerminalBackend: "docker"}}
+	spec := &hermesv1alpha1.HermesAgentSpec{
 		Kubeconfig: hermesv1alpha1.KubeconfigSpec{Enabled: true},
 		Packages:   hermesv1alpha1.PackagesSpec{Brew: []string{"kubectl"}},
-	})
-	terminal := mustParse(t, out)["terminal"].(map[string]any)
+	}
+	terminal := mustParse(t, mustRenderWith(t, pc, spec))["terminal"].(map[string]any)
 	if len(terminal["docker_volumes"].([]any)) != 4 { // dind socket + kubeconfig + sa token + brew
 		t.Errorf("expected 4 docker_volumes, got %v", terminal["docker_volumes"])
 	}
@@ -304,10 +301,8 @@ func TestKubeconfigAndBrewDockerEnvMerge(t *testing.T) {
 func TestDockerSocketAlwaysExposed(t *testing.T) {
 	// docker backend, nothing else -> docker_volumes has just the dind socket (so the
 	// agent can run docker inside its sandbox), DOCKER_HOST set, no --network=host.
-	out, _ := RenderConfigYAML(&hermesv1alpha1.HermesAgentSpec{
-		Runtime: hermesv1alpha1.RuntimeSpec{TerminalBackend: "docker"},
-	})
-	terminal := mustParse(t, out)["terminal"].(map[string]any)
+	pc := &hermesv1alpha1.ProfileConfig{Runtime: hermesv1alpha1.RuntimeSpec{TerminalBackend: "docker"}}
+	terminal := mustParse(t, mustRender(t, pc))["terminal"].(map[string]any)
 	vols, ok := terminal["docker_volumes"].([]any)
 	if !ok || len(vols) != 1 || vols[0] != "/var/run/dind/docker.sock:/var/run/dind/docker.sock" {
 		t.Errorf("docker_volumes should be just the dind socket, got %v", terminal["docker_volumes"])
@@ -320,13 +315,13 @@ func TestDockerSocketAlwaysExposed(t *testing.T) {
 	}
 
 	// tcp transport -> DOCKER_HOST tcp + --network=host, no socket mount.
-	outTCP, _ := RenderConfigYAML(&hermesv1alpha1.HermesAgentSpec{
+	pcTCP := &hermesv1alpha1.ProfileConfig{
 		Runtime: hermesv1alpha1.RuntimeSpec{
 			TerminalBackend: "docker",
 			Docker:          hermesv1alpha1.DockerRuntimeSpec{SocketTransport: "tcp"},
 		},
-	})
-	tt := mustParse(t, outTCP)["terminal"].(map[string]any)
+	}
+	tt := mustParse(t, mustRender(t, pcTCP))["terminal"].(map[string]any)
 	if tt["docker_env"].(map[string]any)["DOCKER_HOST"] != "tcp://127.0.0.1:2375" {
 		t.Errorf("tcp DOCKER_HOST = %v", tt["docker_env"])
 	}
@@ -338,28 +333,23 @@ func TestDockerSocketAlwaysExposed(t *testing.T) {
 	}
 
 	// local backend -> no docker keys at all.
-	out2, _ := RenderConfigYAML(&hermesv1alpha1.HermesAgentSpec{
-		Runtime:    hermesv1alpha1.RuntimeSpec{TerminalBackend: "local"},
-		Kubeconfig: hermesv1alpha1.KubeconfigSpec{Enabled: true},
-	})
+	pcLocal := &hermesv1alpha1.ProfileConfig{Runtime: hermesv1alpha1.RuntimeSpec{TerminalBackend: "local"}}
+	specKube := &hermesv1alpha1.HermesAgentSpec{Kubeconfig: hermesv1alpha1.KubeconfigSpec{Enabled: true}}
+	out2 := mustRenderWith(t, pcLocal, specKube)
 	if _, ok := mustParse(t, out2)["terminal"].(map[string]any)["docker_volumes"]; ok {
 		t.Error("docker_volumes should be absent for local backend")
 	}
 }
 
 func TestExtraConfigMergeTypedWins(t *testing.T) {
-	spec := &hermesv1alpha1.HermesAgentSpec{
+	pc := &hermesv1alpha1.ProfileConfig{
 		Model:                 hermesv1alpha1.ModelSpec{Default: "typed-model"},
 		ExtraConfigPrecedence: "merge",
 		ExtraConfig: &runtime.RawExtension{
 			Raw: []byte(`{"web":{"backend":"tavily"},"model":{"default":"extra-model","provider":"openrouter"}}`),
 		},
 	}
-	out, err := RenderConfigYAML(spec)
-	if err != nil {
-		t.Fatalf("render: %v", err)
-	}
-	got := mustParse(t, out)
+	got := mustParse(t, mustRender(t, pc))
 
 	// Unmodeled section comes through verbatim.
 	web := got["web"].(map[string]any)
@@ -377,18 +367,14 @@ func TestExtraConfigMergeTypedWins(t *testing.T) {
 }
 
 func TestExtraConfigOverride(t *testing.T) {
-	spec := &hermesv1alpha1.HermesAgentSpec{
+	pc := &hermesv1alpha1.ProfileConfig{
 		Model:                 hermesv1alpha1.ModelSpec{Default: "typed-model"},
 		ExtraConfigPrecedence: "override",
 		ExtraConfig: &runtime.RawExtension{
 			Raw: []byte(`{"model":{"default":"override-model"}}`),
 		},
 	}
-	out, err := RenderConfigYAML(spec)
-	if err != nil {
-		t.Fatalf("render: %v", err)
-	}
-	got := mustParse(t, out)
+	got := mustParse(t, mustRender(t, pc))
 	model := got["model"].(map[string]any)
 	if model["default"] != "override-model" {
 		t.Errorf("override: extra should win, got %v", model["default"])
@@ -396,14 +382,10 @@ func TestExtraConfigOverride(t *testing.T) {
 }
 
 func TestVarInterpolationPassthrough(t *testing.T) {
-	spec := &hermesv1alpha1.HermesAgentSpec{
+	pc := &hermesv1alpha1.ProfileConfig{
 		Model: hermesv1alpha1.ModelSpec{BaseURL: "${CUSTOM_BASE_URL}"},
 	}
-	out, err := RenderConfigYAML(spec)
-	if err != nil {
-		t.Fatalf("render: %v", err)
-	}
-	got := mustParse(t, out)
+	got := mustParse(t, mustRender(t, pc))
 	model := got["model"].(map[string]any)
 	if model["base_url"] != "${CUSTOM_BASE_URL}" {
 		t.Errorf("var should pass through untouched, got %v", model["base_url"])
@@ -411,7 +393,7 @@ func TestVarInterpolationPassthrough(t *testing.T) {
 }
 
 func TestRenderMCPServers(t *testing.T) {
-	spec := &hermesv1alpha1.HermesAgentSpec{
+	pc := &hermesv1alpha1.ProfileConfig{
 		MCP: hermesv1alpha1.MCPSpec{
 			Servers: []hermesv1alpha1.MCPServerSpec{
 				{
@@ -439,7 +421,7 @@ func TestRenderMCPServers(t *testing.T) {
 		},
 	}
 
-	got := mustParse(t, mustRender(t, spec))
+	got := mustParse(t, mustRender(t, pc))
 	servers, ok := got["mcp_servers"].(map[string]any)
 	if !ok || len(servers) != 2 {
 		t.Fatalf("mcp_servers = %v", got["mcp_servers"])
@@ -492,14 +474,14 @@ func TestRenderMCPServers(t *testing.T) {
 }
 
 func TestRenderMCPServersOmittedWhenEmpty(t *testing.T) {
-	got := mustParse(t, mustRender(t, &hermesv1alpha1.HermesAgentSpec{}))
+	got := mustParse(t, mustRender(t, &hermesv1alpha1.ProfileConfig{}))
 	if _, ok := got["mcp_servers"]; ok {
 		t.Errorf("mcp_servers should be omitted when no servers declared, got %v", got["mcp_servers"])
 	}
 }
 
 func TestRenderBitwarden(t *testing.T) {
-	spec := &hermesv1alpha1.HermesAgentSpec{
+	pc := &hermesv1alpha1.ProfileConfig{
 		Secrets: hermesv1alpha1.SecretsSpec{
 			Bitwarden: &hermesv1alpha1.BitwardenSpec{
 				Enabled:          ptrBool(true),
@@ -515,7 +497,7 @@ func TestRenderBitwarden(t *testing.T) {
 		},
 	}
 
-	got := mustParse(t, mustRender(t, spec))
+	got := mustParse(t, mustRender(t, pc))
 	secrets, ok := got["secrets"].(map[string]any)
 	if !ok {
 		t.Fatalf("secrets = %v", got["secrets"])
@@ -554,7 +536,7 @@ func TestRenderBitwarden(t *testing.T) {
 }
 
 func TestRenderSecretsOmittedWhenEmpty(t *testing.T) {
-	got := mustParse(t, mustRender(t, &hermesv1alpha1.HermesAgentSpec{}))
+	got := mustParse(t, mustRender(t, &hermesv1alpha1.ProfileConfig{}))
 	if _, ok := got["secrets"]; ok {
 		t.Errorf("secrets should be omitted when unset, got %v", got["secrets"])
 	}

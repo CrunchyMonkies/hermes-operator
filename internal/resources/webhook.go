@@ -17,6 +17,7 @@ limitations under the License.
 package resources
 
 import (
+	"fmt"
 	"maps"
 
 	hermesv1alpha1 "github.com/matthew/hermes-operator/api/v1alpha1"
@@ -100,26 +101,47 @@ func mergedIngress(shared, surface hermesv1alpha1.IngressSpec) hermesv1alpha1.In
 	return out
 }
 
-// webhookPath is the HTTP path a channel's inbound webhook is routed at.
+// webhookPath is the HTTP path a default-profile channel's inbound webhook is
+// routed at.
 func webhookPath(channelType string) string { return WebhookPathPrefix + channelType }
 
-// webhookURL is the public HTTPS URL hermes registers with the platform.
+// webhookURL builds the public HTTPS URL hermes registers with the platform.
 // Telegram mandates a public HTTPS endpoint, so the scheme is always https.
-func webhookURL(host, channelType string) string {
-	return "https://" + host + webhookPath(channelType)
+func webhookURL(host, path string) string { return "https://" + host + path }
+
+// webhookEndpoint is one resolved inbound-webhook endpoint for a (profile,
+// channel). profile == "" is the default profile.
+type webhookEndpoint struct {
+	profile     string
+	channelType string
+	port        int32
+	portName    string
+	host        string
+	path        string
+	wantsURL    bool
+	ch          hermesv1alpha1.ChannelSpec
 }
 
-// resolvedWebhookPorts returns the effective webhook port per channel (indexed to
-// a.Spec.Channels): the explicit ch.WebhookPort when >0, else a deterministically
-// assigned free port for channels that opt into webhook mode, else 0 (polling /
-// no Service port).
-//
-// Assignment reserves the apiServer/dashboard ports and every explicit channel
-// webhook port, then hands out ports from WebhookPortBase upward in channel order,
-// skipping reserved/used ones. This is stable across reconciles for a fixed spec.
-func resolvedWebhookPorts(a *hermesv1alpha1.HermesAgent) []int32 {
-	ports := make([]int32, len(a.Spec.Channels))
+// url is the public webhook URL for this endpoint (empty when no host).
+func (e webhookEndpoint) url() string {
+	if e.host == "" {
+		return ""
+	}
+	return webhookURL(e.host, e.path)
+}
 
+// webhookEndpoints flattens every profile's webhook-capable channels (default
+// profile first, then each named profile) into a pod-wide list with GLOBALLY
+// unique ports — all profile gateways share the pod network namespace, so ports
+// must not collide. Assignment reserves apiServer/dashboard and every explicit
+// ch.WebhookPort, then hands out ports from WebhookPortBase upward; stable across
+// reconciles for a fixed spec.
+//
+// Service port names are ≤15 chars: the default profile keeps wh-<type>
+// (back-compat); named-profile endpoints use a short wh-<n> scheme. Paths are
+// /webhooks/<type> for the default profile and /webhooks/<profile>/<type> for
+// named profiles so routing is unambiguous.
+func webhookEndpoints(a *hermesv1alpha1.HermesAgent) []webhookEndpoint {
 	reserved := map[int32]bool{APIPort: true, DashboardPort: true}
 	if a.Spec.APIServer.Enabled && a.Spec.APIServer.Port != 0 {
 		reserved[a.Spec.APIServer.Port] = true
@@ -128,26 +150,77 @@ func resolvedWebhookPorts(a *hermesv1alpha1.HermesAgent) []int32 {
 		reserved[a.Spec.Dashboard.Port] = true
 	}
 
-	// First pass: honor explicit ports and reserve them.
-	for i, ch := range a.Spec.Channels {
-		if ch.WebhookPort > 0 {
-			ports[i] = ch.WebhookPort
-			reserved[ch.WebhookPort] = true
+	type group struct {
+		name     string
+		channels []hermesv1alpha1.ChannelSpec
+	}
+	groups := make([]group, 0, 1+len(a.Spec.Profiles))
+	groups = append(groups, group{name: "", channels: a.Spec.DefaultProfile.Channels})
+	for _, p := range a.Spec.Profiles {
+		groups = append(groups, group{name: p.Name, channels: p.Channels})
+	}
+
+	// First pass: reserve explicit ports across all profiles.
+	for _, g := range groups {
+		for _, ch := range g.channels {
+			if ch.WebhookPort > 0 {
+				reserved[ch.WebhookPort] = true
+			}
 		}
 	}
 
-	// Second pass: auto-assign a stable free port to opted-in channels at 0.
+	var out []webhookEndpoint
 	next := WebhookPortBase
-	for i, ch := range a.Spec.Channels {
-		if ports[i] != 0 || !channelWantsWebhook(ch) {
-			continue
+	namedIdx := 0
+	for _, g := range groups {
+		for _, ch := range g.channels {
+			if !webhookCapable(ch.Type) {
+				continue
+			}
+			var port int32
+			switch {
+			case ch.WebhookPort > 0:
+				port = ch.WebhookPort
+			case channelWantsWebhook(ch):
+				for reserved[next] {
+					next++
+				}
+				port = next
+				reserved[next] = true
+				next++
+			default:
+				continue // polling: no Service port
+			}
+			host := channelEffectiveHost(a, ch)
+			ep := webhookEndpoint{
+				profile:     g.name,
+				channelType: ch.Type,
+				port:        port,
+				host:        host,
+				wantsURL:    channelWantsWebhook(ch) && host != "",
+				ch:          ch,
+			}
+			if g.name == "" {
+				ep.portName = channelPortName(ch.Type)
+				ep.path = webhookPath(ch.Type)
+			} else {
+				ep.portName = fmt.Sprintf("wh-%d", namedIdx)
+				ep.path = WebhookPathPrefix + g.name + "/" + ch.Type
+				namedIdx++
+			}
+			out = append(out, ep)
 		}
-		for reserved[next] {
-			next++
-		}
-		ports[i] = next
-		reserved[next] = true
-		next++
 	}
-	return ports
+	return out
+}
+
+// profileWebhookEndpoints returns the endpoints for one profile (name "" = default).
+func profileWebhookEndpoints(a *hermesv1alpha1.HermesAgent, profile string) []webhookEndpoint {
+	var out []webhookEndpoint
+	for _, ep := range webhookEndpoints(a) {
+		if ep.profile == profile {
+			out = append(out, ep)
+		}
+	}
+	return out
 }

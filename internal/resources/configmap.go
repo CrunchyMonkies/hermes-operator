@@ -102,7 +102,7 @@ func ProfileSoulContent(p hermesv1alpha1.ProfileSpec, soul string) string {
 // reads that object directly and no ConfigMap is rendered here.
 func SkillConfigMaps(a *hermesv1alpha1.HermesAgent) []*corev1.ConfigMap {
 	var out []*corev1.ConfigMap
-	for _, s := range a.Spec.Skills.Custom {
+	for _, s := range a.Spec.DefaultProfile.Skills.Custom {
 		if s.Inline == "" {
 			continue
 		}

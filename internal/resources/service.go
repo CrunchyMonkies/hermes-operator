@@ -60,13 +60,12 @@ func Service(a *hermesv1alpha1.HermesAgent) *corev1.Service {
 			Protocol:   corev1.ProtocolTCP,
 		})
 	}
-	whPorts := resolvedWebhookPorts(a)
-	for i, ch := range a.Spec.Channels {
-		if p := whPorts[i]; p > 0 {
+	for _, ep := range webhookEndpoints(a) {
+		if ep.port > 0 {
 			ports = append(ports, corev1.ServicePort{
-				Name:       channelPortName(ch.Type),
-				Port:       p,
-				TargetPort: intstr.FromInt32(p),
+				Name:       ep.portName,
+				Port:       ep.port,
+				TargetPort: intstr.FromInt32(ep.port),
 				Protocol:   corev1.ProtocolTCP,
 			})
 		}

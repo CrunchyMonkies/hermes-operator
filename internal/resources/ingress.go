@@ -44,23 +44,34 @@ func Ingresses(a *hermesv1alpha1.HermesAgent) []*networkingv1.Ingress {
 			out = append(out, buildIngress(a, "api", "api", in))
 		}
 	}
-	// Channel webhooks, inheriting the shared ingress; webhook-capable channels
-	// default to /webhooks/<type> unless an explicit non-root path is set.
-	whPorts := resolvedWebhookPorts(a)
-	for i, ch := range a.Spec.Channels {
-		if !ch.Ingress.Enabled || whPorts[i] <= 0 {
+	// Channel webhooks across all profiles, inheriting the shared ingress;
+	// webhook-capable channels default to their resolved path (/webhooks/<type> for
+	// the default profile, /webhooks/<profile>/<type> for named) unless an explicit
+	// non-root path is set.
+	for _, ep := range webhookEndpoints(a) {
+		if !ep.ch.Ingress.Enabled || ep.port <= 0 {
 			continue
 		}
-		in := mergedIngress(shared, ch.Ingress)
+		in := mergedIngress(shared, ep.ch.Ingress)
 		if in.Host == "" {
 			continue
 		}
-		if webhookCapable(ch.Type) && (in.Path == "" || in.Path == "/") {
-			in.Path = webhookPath(ch.Type)
+		if in.Path == "" || in.Path == "/" {
+			in.Path = ep.path
 		}
-		out = append(out, buildIngress(a, "wh-"+ch.Type, channelPortName(ch.Type), in))
+		out = append(out, buildIngress(a, webhookIngressSurface(ep), ep.portName, in))
 	}
 	return out
+}
+
+// webhookIngressSurface is the per-endpoint surface name used in the Ingress
+// object name (a.Name-<surface>): wh-<type> for the default profile, and
+// wh-<profile>-<type> for named profiles.
+func webhookIngressSurface(ep webhookEndpoint) string {
+	if ep.profile == "" {
+		return "wh-" + ep.channelType
+	}
+	return "wh-" + ep.profile + "-" + ep.channelType
 }
 
 func buildIngress(a *hermesv1alpha1.HermesAgent, surface, portName string, in hermesv1alpha1.IngressSpec) *networkingv1.Ingress {
