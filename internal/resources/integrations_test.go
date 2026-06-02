@@ -34,6 +34,47 @@ func envByName(a *hermesv1alpha1.HermesAgent, name string) (string, bool, bool) 
 	return "", false, false
 }
 
+func TestDashboardInsecureEnv(t *testing.T) {
+	// Derived: dashboard exposed via the shared ingress -> HERMES_DASHBOARD_INSECURE=1
+	// (operator-set, not patched), no explicit field needed.
+	a := baseAgent()
+	a.Spec.Dashboard = hermesv1alpha1.DashboardSpec{Enabled: true}
+	a.Spec.Ingress = hermesv1alpha1.IngressSpec{Enabled: true, Host: "lana.example.com"}
+	if v, _, ok := envByName(a, "HERMES_DASHBOARD_INSECURE"); !ok || v != "1" {
+		t.Errorf("HERMES_DASHBOARD_INSECURE = %q ok=%v, want \"1\" (derived from ingress)", v, ok)
+	}
+
+	// Dashboard enabled, no ingress -> not derived insecure (auth gate engages).
+	b := baseAgent()
+	b.Spec.Dashboard = hermesv1alpha1.DashboardSpec{Enabled: true}
+	if _, _, ok := envByName(b, "HERMES_DASHBOARD_INSECURE"); ok {
+		t.Error("HERMES_DASHBOARD_INSECURE must be absent when not exposed via ingress")
+	}
+
+	// Explicit override wins: insecure=false even though the ingress is enabled.
+	c := baseAgent()
+	c.Spec.Dashboard = hermesv1alpha1.DashboardSpec{Enabled: true, Insecure: ptrBool(false)}
+	c.Spec.Ingress = hermesv1alpha1.IngressSpec{Enabled: true, Host: "lana.example.com"}
+	if _, _, ok := envByName(c, "HERMES_DASHBOARD_INSECURE"); ok {
+		t.Error("explicit insecure=false must override the ingress-derived default")
+	}
+
+	// Explicit override true without ingress -> set.
+	d := baseAgent()
+	d.Spec.Dashboard = hermesv1alpha1.DashboardSpec{Enabled: true, Insecure: ptrBool(true)}
+	if v, _, ok := envByName(d, "HERMES_DASHBOARD_INSECURE"); !ok || v != "1" {
+		t.Errorf("explicit insecure=true should set the env (got %q ok=%v)", v, ok)
+	}
+
+	// Dashboard disabled -> never set, even with ingress.
+	e := baseAgent()
+	e.Spec.Dashboard = hermesv1alpha1.DashboardSpec{Enabled: false}
+	e.Spec.Ingress = hermesv1alpha1.IngressSpec{Enabled: true, Host: "lana.example.com"}
+	if _, _, ok := envByName(e, "HERMES_DASHBOARD_INSECURE"); ok {
+		t.Error("HERMES_DASHBOARD_INSECURE must be absent when dashboard is disabled")
+	}
+}
+
 func TestProviderKeyInjection(t *testing.T) {
 	a := baseAgent()
 	a.Spec.DefaultProfile.Model.Providers = []hermesv1alpha1.ProviderSpec{

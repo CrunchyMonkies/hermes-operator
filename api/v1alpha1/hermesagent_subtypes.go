@@ -130,6 +130,15 @@ type DashboardSpec struct {
 	// +kubebuilder:default=9119
 	// +optional
 	Port int32 `json:"port,omitempty"`
+	// insecure skips the dashboard's auth gate so it can bind to a non-loopback
+	// host without an auth provider (sets HERMES_DASHBOARD_INSECURE). hermes
+	// >=v2026.5.29 refuses 0.0.0.0 binds otherwise. When unset, the operator
+	// derives it: insecure is enabled whenever the dashboard is exposed through
+	// the shared Ingress (spec.ingress.enabled) — exposing it necessarily binds
+	// non-loopback. Set explicitly to override (false to require an auth provider,
+	// true to force it). Only safe behind a trusted proxy/ingress.
+	// +optional
+	Insecure *bool `json:"insecure,omitempty"`
 	// +optional
 	Service ServiceSpec `json:"service,omitempty"`
 }

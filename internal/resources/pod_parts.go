@@ -171,6 +171,11 @@ func hermesEnv(a *hermesv1alpha1.HermesAgent) []corev1.EnvVar {
 			corev1.EnvVar{Name: "HERMES_DASHBOARD_HOST", Value: a.Spec.Dashboard.Host},
 			corev1.EnvVar{Name: "HERMES_DASHBOARD_PORT", Value: strconv.Itoa(int(port))},
 		)
+		// Opt into the insecure (no-auth) bind: hermes >=v2026.5.29 refuses a
+		// non-loopback dashboard bind without an auth provider.
+		if dashboardInsecure(a) {
+			env = append(env, corev1.EnvVar{Name: "HERMES_DASHBOARD_INSECURE", Value: "1"})
+		}
 	}
 
 	// Webhook env for webhook-capable channels. The local listen port is set
@@ -314,6 +319,17 @@ func hermesEnvFrom(a *hermesv1alpha1.HermesAgent) []corev1.EnvFromSource {
 		}
 	}
 	return out
+}
+
+// dashboardInsecure reports whether the dashboard should bind insecurely (no auth
+// gate). Honors spec.dashboard.insecure when set; otherwise derives it from
+// whether the dashboard is exposed via the shared Ingress (exposing it binds
+// non-loopback, which the auth gate would otherwise refuse).
+func dashboardInsecure(a *hermesv1alpha1.HermesAgent) bool {
+	if a.Spec.Dashboard.Insecure != nil {
+		return *a.Spec.Dashboard.Insecure
+	}
+	return a.Spec.Ingress.Enabled
 }
 
 // buildProbes returns (liveness, readiness) per the resolved probe mode (§1.2).
