@@ -12,7 +12,7 @@ hermes-operator
 app.kubernetes.io/name: hermes-operator
 app.kubernetes.io/instance: {{ .Release.Name }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
-helm.sh/chart: hermes-operator-{{ .Chart.Version }}
+helm.sh/chart: {{ printf "hermes-operator-%s" .Chart.Version | replace "+" "_" | trunc 63 | trimSuffix "-" }}
 {{- end -}}
 
 {{- define "hermes-operator.selectorLabels" -}}
