@@ -70,6 +70,18 @@ const (
 	ConfigSrcDir = "/etc/hermes-config"
 	// Where custom-skill ConfigMaps are mounted for the reloader to copy from.
 	SkillSrcDir = "/etc/hermes-skills"
+	// Where each profile's .env Secret is mounted (under <dir>/<profile>/.env) for
+	// the init container to copy onto the profile's home.
+	ProfileEnvSrcDir = "/etc/hermes-profile-env"
+
+	// ProfilesSubdir is the directory under HermesHome holding named-profile homes
+	// (each an independent agent instance: $HERMES_HOME/profiles/<name>/).
+	ProfilesSubdir = "profiles"
+	// GatewayStateFile is the per-profile file the upstream image reads at boot;
+	// gateway_state=running auto-starts that profile's gateway (see container_boot).
+	GatewayStateFile = "gateway_state.json"
+	// GatewayStateRunning is the gateway_state.json body that requests auto-start.
+	GatewayStateRunning = `{"gateway_state":"running"}`
 
 	// Verified upstream ports (spec §1).
 	APIPort       int32 = 8642
@@ -123,6 +135,20 @@ func ConfigMapName(a *hermesv1alpha1.HermesAgent) string { return a.Name + "-con
 func SkillConfigMapName(a *hermesv1alpha1.HermesAgent, skill string) string {
 	return a.Name + "-skill-" + skill
 }
+
+// ProfileHome returns a named profile's $HERMES_HOME on the shared PVC.
+func ProfileHome(name string) string {
+	return HermesHome + "/" + ProfilesSubdir + "/" + name
+}
+
+// ProfileConfigKey / ProfileSoulKey are the config-ConfigMap data keys carrying a
+// profile's rendered config.yaml / SOUL.md (flat keys; ConfigMap keys can't hold
+// '/'). The init container maps them onto profiles/<name>/{config.yaml,SOUL.md}.
+func ProfileConfigKey(name string) string { return "profile-" + name + "-config.yaml" }
+func ProfileSoulKey(name string) string   { return "profile-" + name + "-SOUL.md" }
+
+// ProfileEnvVolumeName is the pod volume name carrying a profile's .env Secret.
+func ProfileEnvVolumeName(name string) string { return "penv-" + name }
 
 // PVCName returns the shared claim name (or the existingClaim when set).
 func PVCName(a *hermesv1alpha1.HermesAgent) string {

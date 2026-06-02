@@ -40,7 +40,7 @@ import (
 // +kubebuilder:validation:XValidation:rule="!has(self.mcp) || !has(self.mcp.servers) || self.mcp.servers.all(s, !has(s.transport) || (s.transport == 'stdio' ? (has(s.command) && size(s.command) != 0) : (has(s.url) && size(s.url) != 0)))",message="mcp.servers transport=stdio requires command; transport=http/sse requires url"
 // +kubebuilder:validation:XValidation:rule="!has(self.mcp) || !has(self.mcp.servers) || self.mcp.servers.all(s, !has(s.tools) || !((has(s.tools.include) && size(s.tools.include) != 0) && (has(s.tools.exclude) && size(s.tools.exclude) != 0)))",message="mcp.servers tools must set at most one of include or exclude"
 // +kubebuilder:validation:XValidation:rule="!has(self.secrets) || !has(self.secrets.bitwarden) || !has(self.secrets.bitwarden.enabled) || !self.secrets.bitwarden.enabled || has(self.secrets.bitwarden.accessTokenSecretRef)",message="secrets.bitwarden.enabled requires accessTokenSecretRef"
-// +kubebuilder:validation:XValidation:rule="!has(self.profile) || !(self.profile.name in ['hermes','default','test','tmp','root','sudo'])",message="profile.name must not be a reserved hermes profile name (hermes/default/test/tmp/root/sudo)"
+// +kubebuilder:validation:XValidation:rule="!has(self.profiles) || self.profiles.all(p, !(p.name in ['hermes','default','test','tmp','root','sudo']))",message="profiles[].name must not be a reserved hermes profile name (hermes/default/test/tmp/root/sudo)"
 type HermesAgentSpec struct {
 	// image is the agent container image (the operator's derived image with brew).
 	// +required
@@ -55,10 +55,17 @@ type HermesAgentSpec struct {
 	// +optional
 	PresetRef *PresetRef `json:"presetRef,omitempty"`
 
-	// profile runs the agent under a named hermes profile (isolated home under
-	// $HERMES_HOME/profiles/<name>/). Omit to use the default home.
+	// profiles declares additional hermes profiles hosted in the same pod: each is
+	// a complete, independent agent instance (own config.yaml/SOUL.md/model/skills/
+	// memory/sessions/channels and its OWN gateway process and bot token) rendered
+	// under $HERMES_HOME/profiles/<name>/. The top-level spec is the implicit
+	// "default" profile at $HERMES_HOME; each entry here adds a sibling gateway,
+	// auto-started in-pod by the upstream image. Profile config sections override
+	// the default; unset sections inherit it.
 	// +optional
-	Profile *ProfileSpec `json:"profile,omitempty"`
+	// +listType=map
+	// +listMapKey=name
+	Profiles []ProfileSpec `json:"profiles,omitempty"`
 
 	// soul renders to /opt/data/SOUL.md (agent persona).
 	// +optional
@@ -191,13 +198,45 @@ type HermesAgentSpec struct {
 	Kubeconfig KubeconfigSpec `json:"kubeconfig,omitempty"`
 }
 
-// ProfileName returns the hermes profile the agent runs under, or "" for the
-// default home.
-func (s *HermesAgentSpec) ProfileName() string {
-	if s.Profile != nil {
-		return s.Profile.Name
+// EffectiveProfileSpec returns a synthetic HermesAgentSpec for one named profile:
+// the base (default-profile) spec with the profile's config sections overlaid
+// (profile wins; unset sections inherit the default). It feeds the existing
+// config.yaml/SOUL.md renderers so each profile renders as an independent agent
+// instance. The returned spec's Profiles field is cleared to avoid recursion.
+func (s *HermesAgentSpec) EffectiveProfileSpec(p ProfileSpec) HermesAgentSpec {
+	out := *s.DeepCopy()
+	out.Profiles = nil
+	if p.Soul != "" {
+		out.Soul = p.Soul
 	}
-	return ""
+	if p.Model != nil {
+		out.Model = *p.Model
+	}
+	if p.Agent != nil {
+		out.Agent = *p.Agent
+	}
+	if p.Compression != nil {
+		out.Compression = *p.Compression
+	}
+	if p.Memory != nil {
+		out.Memory = *p.Memory
+	}
+	if p.Runtime != nil {
+		out.Runtime = *p.Runtime
+	}
+	if p.MCP != nil {
+		out.MCP = *p.MCP
+	}
+	if p.Skills != nil {
+		out.Skills = *p.Skills
+	}
+	// A profile defines its own channel set (it may legitimately be empty).
+	out.Channels = p.Channels
+	if p.ExtraConfig != nil {
+		out.ExtraConfig = p.ExtraConfig
+		out.ExtraConfigPrecedence = p.ExtraConfigPrecedence
+	}
+	return out
 }
 
 // EndpointsStatus reports the in-cluster service endpoints.
@@ -224,6 +263,18 @@ type PackagesStatus struct {
 	BrewInstalled []string `json:"brewInstalled,omitempty"`
 }
 
+// ProfileStatus reports the reconciled state of one hosted profile.
+type ProfileStatus struct {
+	// +required
+	Name string `json:"name"`
+	// home is the profile's $HERMES_HOME directory on the shared PVC.
+	// +optional
+	Home string `json:"home,omitempty"`
+	// enabled mirrors whether the profile's gateway is set to auto-start.
+	// +optional
+	Enabled bool `json:"enabled,omitempty"`
+}
+
 // HermesAgentStatus defines the observed state of HermesAgent.
 type HermesAgentStatus struct {
 	// phase is a coarse lifecycle summary.
@@ -244,6 +295,11 @@ type HermesAgentStatus struct {
 	Skills SkillsStatus `json:"skills,omitempty"`
 	// +optional
 	Packages PackagesStatus `json:"packages,omitempty"`
+	// profiles reports the hosted named profiles (spec.profiles).
+	// +listType=map
+	// +listMapKey=name
+	// +optional
+	Profiles []ProfileStatus `json:"profiles,omitempty"`
 	// +listType=map
 	// +listMapKey=type
 	// +optional

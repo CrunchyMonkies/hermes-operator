@@ -32,6 +32,9 @@ type HashInputs struct {
 	Soul string
 	// SkillPayloads maps custom skill name -> its rendered SKILL.md content.
 	SkillPayloads map[string]string
+	// ProfilePayloads maps a per-profile artifact key (e.g. "<name>/config.yaml")
+	// -> its rendered content, so a profile's config/soul change rolls the pod.
+	ProfilePayloads map[string]string
 	// BrewPackages as declared.
 	BrewPackages []string
 	// SecretVersions maps referenced Secret name -> resourceVersion. The
@@ -50,6 +53,10 @@ func ConfigHash(in HashInputs) string {
 
 	for _, name := range sortedKeys(in.SkillPayloads) {
 		writeBlock(h, "skill:"+name, []byte(in.SkillPayloads[name]))
+	}
+
+	for _, key := range sortedKeys(in.ProfilePayloads) {
+		writeBlock(h, "profile:"+key, []byte(in.ProfilePayloads[key]))
 	}
 
 	writeBlock(h, "brew", []byte(joinSorted(in.BrewPackages)))

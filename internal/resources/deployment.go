@@ -113,10 +113,10 @@ func basePodTemplate(a *hermesv1alpha1.HermesAgent, configHash, reloaderImage st
 		Name:    InitConfig,
 		Image:   a.Spec.Image,
 		Command: configInitCommand(a),
-		VolumeMounts: []corev1.VolumeMount{
+		VolumeMounts: append([]corev1.VolumeMount{
 			{Name: VolShared, MountPath: HermesHome, SubPath: SubPathData},
 			{Name: VolConfig, MountPath: ConfigSrcDir, ReadOnly: true},
-		},
+		}, profileEnvMounts(a)...),
 		SecurityContext: initSecurityContext(a),
 	}
 
@@ -162,9 +162,23 @@ func reloaderEnv(a *hermesv1alpha1.HermesAgent) []corev1.EnvVar {
 		{Name: "RELOADER_BREW_PACKAGES", Value: strings.Join(a.Spec.Packages.Brew, " ")},
 		{Name: "RELOADER_CUSTOM_SKILLS", Value: strings.Join(skillNames, ",")},
 		{Name: "RELOADER_SKILL_SRC_DIR", Value: SkillSrcDir},
-		{Name: "HERMES_HOME", Value: effectiveHome(a)},
+		{Name: "HERMES_HOME", Value: HermesHome},
+	}
+	// Named profile homes the reloader also reconciles (bundled-skill sync per
+	// profile). Comma-separated list of profiles/<name> home dirs.
+	if homes := profileHomes(a); len(homes) > 0 {
+		env = append(env, corev1.EnvVar{Name: "RELOADER_PROFILE_HOMES", Value: strings.Join(homes, ",")})
 	}
 	return env
+}
+
+// profileHomes returns the $HERMES_HOME dirs for every named profile.
+func profileHomes(a *hermesv1alpha1.HermesAgent) []string {
+	out := make([]string, 0, len(a.Spec.Profiles))
+	for _, p := range a.Spec.Profiles {
+		out = append(out, ProfileHome(p.Name))
+	}
+	return out
 }
 
 func fieldRef(path string) *corev1.EnvVarSource {

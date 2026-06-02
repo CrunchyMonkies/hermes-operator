@@ -185,9 +185,9 @@ var _ = Describe("HermesAgent Controller", func() {
 			a := &hermesv1alpha1.HermesAgent{
 				ObjectMeta: metav1.ObjectMeta{Name: "bad-profile-reserved", Namespace: "default"},
 				Spec: hermesv1alpha1.HermesAgentSpec{
-					Image:   "img:v1",
-					Storage: hermesv1alpha1.StorageSpec{Size: &size},
-					Profile: &hermesv1alpha1.ProfileSpec{Name: "default"},
+					Image:    "img:v1",
+					Storage:  hermesv1alpha1.StorageSpec{Size: &size},
+					Profiles: []hermesv1alpha1.ProfileSpec{{Name: "default"}},
 				},
 			}
 			Expect(k8sClient.Create(ctx, a)).NotTo(Succeed())
@@ -197,24 +197,42 @@ var _ = Describe("HermesAgent Controller", func() {
 			a := &hermesv1alpha1.HermesAgent{
 				ObjectMeta: metav1.ObjectMeta{Name: "bad-profile-pattern", Namespace: "default"},
 				Spec: hermesv1alpha1.HermesAgentSpec{
-					Image:   "img:v1",
-					Storage: hermesv1alpha1.StorageSpec{Size: &size},
-					Profile: &hermesv1alpha1.ProfileSpec{Name: "Staging!"},
+					Image:    "img:v1",
+					Storage:  hermesv1alpha1.StorageSpec{Size: &size},
+					Profiles: []hermesv1alpha1.ProfileSpec{{Name: "Staging!"}},
 				},
 			}
 			Expect(k8sClient.Create(ctx, a)).NotTo(Succeed())
 		})
 
-		It("accepts a valid profile name", func() {
+		It("accepts valid named profiles", func() {
 			a := &hermesv1alpha1.HermesAgent{
 				ObjectMeta: metav1.ObjectMeta{Name: "good-profile", Namespace: "default"},
 				Spec: hermesv1alpha1.HermesAgentSpec{
 					Image:   "img:v1",
 					Storage: hermesv1alpha1.StorageSpec{Size: &size},
-					Profile: &hermesv1alpha1.ProfileSpec{Name: "staging"},
+					Profiles: []hermesv1alpha1.ProfileSpec{
+						{Name: "staging"},
+						{Name: "support", Soul: "be helpful"},
+					},
 				},
 			}
 			Expect(k8sClient.Create(ctx, a)).To(Succeed())
+		})
+
+		It("rejects duplicate profile names", func() {
+			a := &hermesv1alpha1.HermesAgent{
+				ObjectMeta: metav1.ObjectMeta{Name: "dup-profile", Namespace: "default"},
+				Spec: hermesv1alpha1.HermesAgentSpec{
+					Image:   "img:v1",
+					Storage: hermesv1alpha1.StorageSpec{Size: &size},
+					Profiles: []hermesv1alpha1.ProfileSpec{
+						{Name: "staging"},
+						{Name: "staging"},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, a)).NotTo(Succeed())
 		})
 
 		It("accepts valid stdio and http mcp servers", func() {

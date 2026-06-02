@@ -376,57 +376,90 @@ func TestLocalBackendHasNoDind(t *testing.T) {
 	}
 }
 
-// TestProfileRunsUnderNamedHome: spec.profile points HERMES_HOME at the profile
-// dir on the agent + reloader, and config-init writes config/SOUL there + the
-// sticky active_profile, while the kubeconfig stays HOME-relative.
-func TestProfileRunsUnderNamedHome(t *testing.T) {
+// TestMultiProfileRendersIndependentHomes: spec.profiles[] each render an
+// independent agent home under profiles/<name> via config-init (config.yaml,
+// SOUL.md marker, gateway_state=running for enabled, .env from envSecretRef),
+// the reloader gets the profile-home list, and the agent container's HERMES_HOME
+// is NOT overridden (the default profile stays at /opt/data).
+func TestMultiProfileRendersIndependentHomes(t *testing.T) {
 	a := baseAgent()
-	a.Spec.Profile = &hermesv1alpha1.ProfileSpec{Name: "staging"}
 	a.Spec.Kubeconfig.Enabled = true
-	const home = "/opt/data/profiles/staging"
+	a.Spec.Profiles = []hermesv1alpha1.ProfileSpec{
+		{Name: "support", EnvSecretRef: &hermesv1alpha1.SecretFileRef{Name: "support-env"}},
+		{Name: "research", Enabled: ptrBool(false)},
+	}
+	const supportHome = "/opt/data/profiles/support"
+	const researchHome = "/opt/data/profiles/research"
 
-	// agent container HERMES_HOME -> profile dir.
-	if v, _, ok := envByName(a, "HERMES_HOME"); !ok || v != home {
-		t.Errorf("agent HERMES_HOME = %q ok=%v, want %q", v, ok, home)
+	// The default profile keeps the image default home: no HERMES_HOME override.
+	if _, _, ok := envByName(a, "HERMES_HOME"); ok {
+		t.Error("agent should not set HERMES_HOME (default profile uses /opt/data)")
 	}
 
 	dep, err := Deployment(a, "sha256:abc", "")
 	if err != nil {
 		t.Fatalf("Deployment: %v", err)
 	}
-	// reloader HERMES_HOME -> profile dir (so skills materialize there).
+
+	// reloader: base home plus the named profile homes.
 	reloader := findContainer(dep.Spec.Template.Spec.Containers, ContainerReloader)
-	var rh string
+	var rh, rph string
 	for _, e := range reloader.Env {
-		if e.Name == "HERMES_HOME" {
+		switch e.Name {
+		case "HERMES_HOME":
 			rh = e.Value
+		case "RELOADER_PROFILE_HOMES":
+			rph = e.Value
 		}
 	}
-	if rh != home {
-		t.Errorf("reloader HERMES_HOME = %q, want %q", rh, home)
+	if rh != "/opt/data" {
+		t.Errorf("reloader HERMES_HOME = %q, want /opt/data", rh)
+	}
+	if rph != supportHome+","+researchHome {
+		t.Errorf("RELOADER_PROFILE_HOMES = %q, want %q", rph, supportHome+","+researchHome)
 	}
 
-	// config-init writes into the profile dir + active_profile; kubeconfig stays
-	// at the base home's ~/.kube.
+	// config-init renders each profile home; enabled writes gateway_state=running,
+	// disabled does not; envSecretRef copies .env; kubeconfig stays at the base home.
 	script := configInitCommand(a)[2]
 	for _, want := range []string{
-		"mkdir -p " + home,
-		"cp /etc/hermes-config/$f " + home + "/$f",
-		"chmod 640 " + home + "/config.yaml",
-		"staging > /opt/data/active_profile",
+		"mkdir -p " + supportHome,
+		"cp /etc/hermes-config/" + ProfileConfigKey("support") + " " + supportHome + "/config.yaml",
+		"cp /etc/hermes-config/" + ProfileSoulKey("support") + " " + supportHome + "/SOUL.md",
+		"cp " + ProfileEnvSrcDir + "/support/.env " + supportHome + "/.env",
+		"'" + GatewayStateRunning + "' > " + supportHome + "/" + GatewayStateFile,
+		"mkdir -p " + researchHome,
 		"cp /etc/hermes-config/kube-config /opt/data/.kube/config",
 	} {
 		if !strings.Contains(script, want) {
 			t.Errorf("config-init script missing %q:\n%s", want, script)
 		}
 	}
-	if strings.Contains(script, home+"/.kube") {
-		t.Errorf("kubeconfig must stay at the base home, not the profile dir:\n%s", script)
+	// Disabled profile must not auto-start, and a profile without envSecretRef must
+	// not attempt an .env copy.
+	if strings.Contains(script, "' > "+researchHome+"/"+GatewayStateFile) {
+		t.Errorf("disabled profile must not write gateway_state=running:\n%s", script)
+	}
+	if strings.Contains(script, ProfileEnvSrcDir+"/research/.env") {
+		t.Errorf("profile without envSecretRef must not copy .env:\n%s", script)
+	}
+
+	// The support profile's .env Secret is mounted into config-init read-only.
+	initC := findContainer(dep.Spec.Template.Spec.InitContainers, InitConfig)
+	if initC == nil {
+		t.Fatal("config-init container missing")
+	}
+	if findMount(initC, ProfileEnvSrcDir+"/support") == nil {
+		t.Error("config-init missing the support profile .env mount")
+	}
+	if vol := findVolume(dep.Spec.Template.Spec.Volumes, ProfileEnvVolumeName("support")); vol == nil {
+		t.Error("pod missing the support profile .env volume")
 	}
 }
 
-// TestNoProfileDefaultHome: without spec.profile, nothing changes — no HERMES_HOME
-// on the agent, reloader stays /opt/data, config-init targets the base home.
+// TestNoProfileDefaultHome: without spec.profiles, nothing changes — no HERMES_HOME
+// on the agent, reloader stays /opt/data with no profile-home list, config-init
+// targets the base home only.
 func TestNoProfileDefaultHome(t *testing.T) {
 	a := baseAgent()
 	if _, _, ok := envByName(a, "HERMES_HOME"); ok {
@@ -441,10 +474,13 @@ func TestNoProfileDefaultHome(t *testing.T) {
 		if e.Name == "HERMES_HOME" && e.Value != "/opt/data" {
 			t.Errorf("reloader HERMES_HOME = %q, want /opt/data", e.Value)
 		}
+		if e.Name == "RELOADER_PROFILE_HOMES" {
+			t.Errorf("no-profile deployment must not set RELOADER_PROFILE_HOMES, got %q", e.Value)
+		}
 	}
 	script := configInitCommand(a)[2]
-	if strings.Contains(script, "/profiles/") || strings.Contains(script, "active_profile") {
-		t.Errorf("no-profile config-init must not reference profiles/active_profile:\n%s", script)
+	if strings.Contains(script, "/profiles/") {
+		t.Errorf("no-profile config-init must not reference profiles/:\n%s", script)
 	}
 	if !strings.Contains(script, "cp /etc/hermes-config/$f /opt/data/$f") {
 		t.Errorf("no-profile config-init should target the base home:\n%s", script)

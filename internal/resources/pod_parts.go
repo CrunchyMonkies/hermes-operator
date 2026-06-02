@@ -75,6 +75,7 @@ func baseVolumes(a *hermesv1alpha1.HermesAgent) []corev1.Volume {
 		corev1.Volume{Name: VolShm, VolumeSource: corev1.VolumeSource{EmptyDir: &shm}},
 	)
 	vols = append(vols, skillSourceVolumes(a)...)
+	vols = append(vols, profileEnvVolumes(a)...)
 	return vols
 }
 
@@ -289,11 +290,11 @@ func hermesEnv(a *hermesv1alpha1.HermesAgent) []corev1.EnvVar {
 		env = append(env, corev1.EnvVar{Name: "PYTHONPATH", Value: PipSitePackages})
 	}
 
-	// Run under a named profile by pointing HERMES_HOME at its dir (overrides the
-	// image default); the gateway, reloader and bundled-skill sync all key off this.
-	if a.Spec.ProfileName() != "" {
-		env = append(env, corev1.EnvVar{Name: "HERMES_HOME", Value: effectiveHome(a)})
-	}
+	// The default profile runs at the image's default $HERMES_HOME (/opt/data) via
+	// the main container's `gateway run`. Named profiles (spec.profiles) are
+	// independent gateways under profiles/<name>/, discovered and auto-started
+	// in-pod by the upstream image — they don't touch the agent container's
+	// HERMES_HOME.
 
 	// User-provided env appended last (can override operator defaults by name
 	// only if duplicated; Kubernetes keeps the last occurrence).
@@ -394,13 +395,49 @@ func dockerHost(a *hermesv1alpha1.HermesAgent) string {
 	return "unix://" + DindSocketDir + "/docker.sock"
 }
 
-// effectiveHome is the agent's runtime HERMES_HOME: the named-profile directory
-// ($HERMES_HOME/profiles/<name>) when spec.profile is set, else the default home.
-func effectiveHome(a *hermesv1alpha1.HermesAgent) string {
-	if p := a.Spec.ProfileName(); p != "" {
-		return HermesHome + "/profiles/" + p
+// profileEnvVolumes mounts each named profile's .env Secret (envSecretRef) so the
+// config-init container can copy it onto the profile's home as profiles/<name>/.env
+// (the upstream image loads it with override=True for isolated bot tokens). The
+// Secret's chosen key is projected as the file ".env".
+func profileEnvVolumes(a *hermesv1alpha1.HermesAgent) []corev1.Volume {
+	out := make([]corev1.Volume, 0, len(a.Spec.Profiles))
+	for _, p := range a.Spec.Profiles {
+		ref := p.EnvSecretRef
+		if ref == nil || ref.Name == "" {
+			continue
+		}
+		key := ref.Key
+		if key == "" {
+			key = ".env"
+		}
+		out = append(out, corev1.Volume{
+			Name: ProfileEnvVolumeName(p.Name),
+			VolumeSource: corev1.VolumeSource{
+				Secret: &corev1.SecretVolumeSource{
+					SecretName: ref.Name,
+					Items:      []corev1.KeyToPath{{Key: key, Path: ".env"}},
+				},
+			},
+		})
 	}
-	return HermesHome
+	return out
+}
+
+// profileEnvMounts mounts the profile .env Secret volumes into the config-init
+// container at <ProfileEnvSrcDir>/<name>/.env (read-only).
+func profileEnvMounts(a *hermesv1alpha1.HermesAgent) []corev1.VolumeMount {
+	out := make([]corev1.VolumeMount, 0, len(a.Spec.Profiles))
+	for _, p := range a.Spec.Profiles {
+		if p.EnvSecretRef == nil || p.EnvSecretRef.Name == "" {
+			continue
+		}
+		out = append(out, corev1.VolumeMount{
+			Name:      ProfileEnvVolumeName(p.Name),
+			MountPath: ProfileEnvSrcDir + "/" + p.Name,
+			ReadOnly:  true,
+		})
+	}
+	return out
 }
 
 // dindImage resolves the dind sidecar image, swapping to the rootless variant
@@ -611,9 +648,8 @@ ln -sf "$PREFIX/bin/apptainer" %[3]s/singularity
 // spec §4.3 / open question #2). Re-applied every start ⇒ operator-owned config.
 func configInitCommand(a *hermesv1alpha1.HermesAgent) []string {
 	uidgid := fmt.Sprintf("%d:%d", a.Spec.HermesUID, a.Spec.HermesGID)
-	// config.yaml/SOUL.md land in the effective home — the named-profile dir when
-	// spec.profile is set (mkdir -p creates it), else the default home.
-	home := effectiveHome(a)
+	// config.yaml/SOUL.md for the default profile land in the base home.
+	home := HermesHome
 	script := fmt.Sprintf(`set -e
 mkdir -p %[2]s
 for f in config.yaml SOUL.md; do
@@ -624,13 +660,30 @@ for f in config.yaml SOUL.md; do
 done
 chmod 640 %[2]s/config.yaml 2>/dev/null || true
 `, ConfigSrcDir, home, uidgid)
-	// Named profile: write the sticky active_profile at the base home so interactive
-	// `hermes` (which doesn't see HERMES_HOME=<profile dir>) resolves the same profile.
-	if p := a.Spec.ProfileName(); p != "" {
-		script += fmt.Sprintf(`printf '%%s\n' %[2]s > %[1]s/active_profile
-chown %[3]s %[1]s/active_profile 2>/dev/null || true
-`, HermesHome, p, uidgid)
+
+	// Named profiles: render each as an independent agent home under profiles/<name>.
+	// SOUL.md is the discovery marker; gateway_state.json=running auto-starts the
+	// gateway; .env (when provided) isolates this profile's bot tokens. This runs in
+	// the config-init init container — before the main container's s6/container_boot
+	// reads gateway_state.json — so enabled profiles auto-start on first boot.
+	for _, p := range a.Spec.Profiles {
+		pd := ProfileHome(p.Name)
+		script += fmt.Sprintf(`mkdir -p %[2]s
+if [ -f %[1]s/%[4]s ]; then cp %[1]s/%[4]s %[2]s/config.yaml; chown %[3]s %[2]s/config.yaml 2>/dev/null || true; chmod 640 %[2]s/config.yaml 2>/dev/null || true; fi
+if [ -f %[1]s/%[5]s ]; then cp %[1]s/%[5]s %[2]s/SOUL.md; chown %[3]s %[2]s/SOUL.md 2>/dev/null || true; fi
+`, ConfigSrcDir, pd, uidgid, ProfileConfigKey(p.Name), ProfileSoulKey(p.Name))
+		if p.EnvSecretRef != nil && p.EnvSecretRef.Name != "" {
+			src := ProfileEnvSrcDir + "/" + p.Name + "/.env"
+			script += fmt.Sprintf(`if [ -f %[1]s ]; then cp %[1]s %[2]s/.env; chown %[3]s %[2]s/.env 2>/dev/null || true; chmod 600 %[2]s/.env 2>/dev/null || true; fi
+`, src, pd, uidgid)
+		}
+		if p.IsEnabled() {
+			script += fmt.Sprintf(`printf '%%s' '%[3]s' > %[1]s/%[4]s
+chown %[2]s %[1]s/%[4]s 2>/dev/null || true
+`, pd, uidgid, GatewayStateRunning, GatewayStateFile)
+		}
 	}
+
 	if a.Spec.Kubeconfig.Enabled {
 		// Write ~/.kube/config (HOME=/opt/data) owned by the hermes user, mode
 		// 0600, with a writable 0700 .kube dir so kubectl's cache works.
