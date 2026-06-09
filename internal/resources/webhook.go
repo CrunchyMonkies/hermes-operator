@@ -35,7 +35,7 @@ type webhookPlatform struct {
 
 // webhookPlatforms is the registry of channel types that actually serve an
 // INBOUND webhook in hermes. Verified against third_party/hermes-agent at tag
-// v2026.5.29.2 — RE-VERIFY WHEN BUMPING THE HERMES TAG.
+// v2026.6.5 — RE-VERIFY WHEN BUMPING THE HERMES TAG.
 //
 // Of the channel types the operator exposes, only telegram qualifies:
 // gateway/platforms/telegram.py starts a webhook server when TELEGRAM_WEBHOOK_URL

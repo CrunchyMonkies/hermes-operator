@@ -8,7 +8,7 @@
 #
 # Build context is the repository root:
 #   docker build -f images/agent/Dockerfile .
-ARG UPSTREAM_IMAGE=nousresearch/hermes-agent:v2026.5.29.2
+ARG UPSTREAM_IMAGE=nousresearch/hermes-agent:v2026.6.5
 FROM ${UPSTREAM_IMAGE}
 
 USER root

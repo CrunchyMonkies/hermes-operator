@@ -102,7 +102,7 @@ spec:
                   apiMode:
                     description: |-
                       apiMode selects the wire protocol/transport for the endpoint. Optional: same
-                      inheritance as baseURL. Known values at tag v2026.5.29.2: chat_completions,
+                      inheritance as baseURL. Known values at tag v2026.6.5: chat_completions,
                       anthropic_messages, codex_responses, bedrock_converse (re-verify on tag bump).
                       -> model.api_mode
                     type: string

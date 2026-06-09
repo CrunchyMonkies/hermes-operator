@@ -16,7 +16,7 @@ limitations under the License.
 
 // Package config renders a HermesAgent spec into the on-disk config.yaml the
 // Hermes gateway consumes, plus the SOUL.md persona file. Keys mirror the
-// verified upstream cli-config.yaml.example (tag v2026.5.29.2). See spec §3.4.
+// verified upstream cli-config.yaml.example (tag v2026.6.5). See spec §3.4.
 package config
 
 import (
@@ -29,9 +29,11 @@ import (
 	hermesv1alpha1 "github.com/matthew/hermes-operator/api/v1alpha1"
 )
 
-// ConfigVersion is the upstream _config_version at the pinned tag (v2026.5.29.2).
-// The 23→24 bump is purely additive (new optional keys); no structural migration.
-const ConfigVersion = 24
+// ConfigVersion is the upstream _config_version at the pinned tag (v2026.6.5).
+// The 24→27 bumps are additive (new optional keys: tools.tool_search, streaming,
+// dashboard.basic_auth, etc.); the only upstream removal (logging.memory_monitor)
+// is a key the operator never rendered, so there is no structural migration.
+const ConfigVersion = 27
 
 // RenderConfigYAML builds config.yaml for one profile from its ProfileConfig
 // (plus pod-level context from spec for the docker-terminal volume wiring),
@@ -223,6 +225,29 @@ func renderTyped(pc *hermesv1alpha1.ProfileConfig, spec *hermesv1alpha1.HermesAg
 	}
 	putNonZeroInt(skills, "creation_nudge_interval", int64(pc.Skills.CreationNudgeInterval))
 	putSection(root, "skills", skills)
+
+	// streaming: (top-level) — real-time token streaming to messaging platforms.
+	streaming := map[string]any{}
+	putBoolPtr(streaming, "enabled", pc.Streaming.Enabled)
+	putStr(streaming, "transport", pc.Streaming.Transport)
+	putFloatStr(streaming, "edit_interval", pc.Streaming.EditInterval)
+	putNonZeroInt(streaming, "buffer_threshold", int64(pc.Streaming.BufferThreshold))
+	putStr(streaming, "cursor", pc.Streaming.Cursor)
+	putFloatStr(streaming, "fresh_final_after_seconds", pc.Streaming.FreshFinalAfterSeconds)
+	putSection(root, "streaming", streaming)
+
+	// tools: (top-level) — progressive tool-schema disclosure.
+	if ts := pc.Tools.ToolSearch; ts != nil {
+		toolSearch := map[string]any{}
+		putStr(toolSearch, "enabled", ts.Enabled)
+		putNonZeroInt(toolSearch, "threshold_pct", int64(ts.ThresholdPct))
+		putNonZeroInt(toolSearch, "search_default_limit", int64(ts.SearchDefaultLimit))
+		putNonZeroInt(toolSearch, "max_search_limit", int64(ts.MaxSearchLimit))
+		if tools := map[string]any{}; len(toolSearch) > 0 {
+			tools["tool_search"] = toolSearch
+			root["tools"] = tools
+		}
+	}
 
 	return root
 }

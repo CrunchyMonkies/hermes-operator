@@ -40,7 +40,7 @@ type ModelSpec struct {
 	// +optional
 	BaseURL string `json:"baseURL,omitempty"`
 	// apiMode selects the wire protocol/transport for the endpoint. Optional: same
-	// inheritance as baseURL. Known values at tag v2026.5.29.2: chat_completions,
+	// inheritance as baseURL. Known values at tag v2026.6.5: chat_completions,
 	// anthropic_messages, codex_responses, bedrock_converse (re-verify on tag bump).
 	// -> model.api_mode
 	// +optional
@@ -139,8 +139,43 @@ type DashboardSpec struct {
 	// true to force it). Only safe behind a trusted proxy/ingress.
 	// +optional
 	Insecure *bool `json:"insecure,omitempty"`
+	// basicAuth configures the dashboard's bundled username/password gate
+	// (the `dashboard_auth/basic` provider, hermes >=v2026.6.5). It is the
+	// authenticated alternative to insecure-bind: set this instead of
+	// insecure=true when exposing the dashboard through Ingress and you want a
+	// password rather than no auth gate. Maps to the HERMES_DASHBOARD_BASIC_AUTH_*
+	// env vars. A no-op until username is set.
+	// +optional
+	BasicAuth *DashboardBasicAuthSpec `json:"basicAuth,omitempty"`
 	// +optional
 	Service ServiceSpec `json:"service,omitempty"`
+}
+
+// DashboardBasicAuthSpec configures the dashboard's bundled basic_auth provider
+// via the HERMES_DASHBOARD_BASIC_AUTH_* env overrides. Secret material
+// (password hash, token-signing key) is sourced from Secrets, never the CRD or
+// config.yaml, so no plaintext is stored at rest.
+type DashboardBasicAuthSpec struct {
+	// username for the dashboard login. Blank (the default) leaves the provider
+	// a no-op. Sets HERMES_DASHBOARD_BASIC_AUTH_USERNAME.
+	// +optional
+	Username string `json:"username,omitempty"`
+	// passwordHashSecretRef supplies HERMES_DASHBOARD_BASIC_AUTH_PASSWORD_HASH
+	// (a scrypt hash, e.g. `scrypt$...`; no plaintext at rest). Preferred over a
+	// plaintext password. Compute with the upstream
+	// `plugins.dashboard_auth.basic.hash_password` helper.
+	// +optional
+	PasswordHashSecretRef *SecretKeyRef `json:"passwordHashSecretRef,omitempty"`
+	// secretSecretRef supplies HERMES_DASHBOARD_BASIC_AUTH_SECRET, the HMAC key
+	// that signs session tokens. Leave unset for a random per-process key
+	// (sessions then don't survive a restart); set a stable 32+ byte key for
+	// restart-surviving sessions.
+	// +optional
+	SecretSecretRef *SecretKeyRef `json:"secretSecretRef,omitempty"`
+	// sessionTTLSeconds sets HERMES_DASHBOARD_BASIC_AUTH_TTL_SECONDS. 0 (the
+	// default) uses the plugin default (12h).
+	// +optional
+	SessionTTLSeconds int32 `json:"sessionTTLSeconds,omitempty"`
 }
 
 // ChannelSpec binds one messaging platform. See specification §3.3 for the
@@ -502,6 +537,14 @@ type ProfileConfig struct {
 	Channels []ChannelSpec `json:"channels,omitempty"`
 	// +optional
 	Skills SkillsSpec `json:"skills,omitempty"`
+	// streaming configures real-time token streaming to messaging platforms
+	// (config.yaml `streaming`, hermes >=v2026.6.5).
+	// +optional
+	Streaming StreamingSpec `json:"streaming,omitempty"`
+	// tools configures the model-facing tool surface (config.yaml `tools`,
+	// hermes >=v2026.6.5) — currently progressive tool-schema disclosure.
+	// +optional
+	Tools ToolsSpec `json:"tools,omitempty"`
 	// extraConfig is deep-merged into this profile's config.yaml (free-form).
 	// +kubebuilder:pruning:PreserveUnknownFields
 	// +optional
@@ -510,6 +553,71 @@ type ProfileConfig struct {
 	// +kubebuilder:validation:Enum=merge;override
 	// +optional
 	ExtraConfigPrecedence string `json:"extraConfigPrecedence,omitempty"`
+}
+
+// StreamingSpec configures real-time token streaming to messaging platforms
+// (config.yaml `streaming`). Disabled by default upstream; streaming costs extra
+// edit/draft API calls per response.
+type StreamingSpec struct {
+	// enabled is the master switch. When false (the default) each response is
+	// delivered as a single final message.
+	// +optional
+	Enabled *bool `json:"enabled,omitempty"`
+	// transport selects the streaming mechanism: auto (prefer native drafts,
+	// fall back to edits), draft, edit, or off.
+	// +kubebuilder:validation:Enum=auto;draft;edit;off
+	// +optional
+	Transport string `json:"transport,omitempty"`
+	// editInterval is the minimum seconds between progressive edits (float, e.g.
+	// "0.8"). Stored as a string to preserve fractional values.
+	// +optional
+	EditInterval *string `json:"editInterval,omitempty"`
+	// bufferThreshold flushes the buffer once this many characters accumulate.
+	// +optional
+	BufferThreshold int32 `json:"bufferThreshold,omitempty"`
+	// cursor is the glyph appended to the in-progress message while streaming.
+	// +optional
+	Cursor string `json:"cursor,omitempty"`
+	// freshFinalAfterSeconds (float, e.g. "60") delivers the final edit of a
+	// long-running streamed response as a fresh message once the preview has been
+	// visible at least this long (Telegram only). Stored as a string.
+	// +optional
+	FreshFinalAfterSeconds *string `json:"freshFinalAfterSeconds,omitempty"`
+}
+
+// ToolsSpec configures the model-facing tool surface (config.yaml `tools`).
+type ToolsSpec struct {
+	// toolSearch enables progressive tool-schema disclosure, replacing many
+	// deferrable tool schemas with tool_search/tool_describe/tool_call bridges.
+	// +optional
+	ToolSearch *ToolSearchSpec `json:"toolSearch,omitempty"`
+}
+
+// ToolSearchSpec tunes progressive tool-schema disclosure (config.yaml
+// `tools.tool_search`). Core hermes tools are never deferred.
+type ToolSearchSpec struct {
+	// enabled: "auto" (activate only when deferrable schemas exceed thresholdPct
+	// of the model context), "on" (always when there is a deferrable tool), or
+	// "off".
+	// +kubebuilder:validation:Enum=auto;on;off
+	// +optional
+	Enabled string `json:"enabled,omitempty"`
+	// thresholdPct is the percentage of context length at which "auto" mode kicks
+	// in (0..100).
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:Maximum=100
+	// +optional
+	ThresholdPct int32 `json:"thresholdPct,omitempty"`
+	// searchDefaultLimit is how many hits tool_search returns without an explicit
+	// limit argument.
+	// +optional
+	SearchDefaultLimit int32 `json:"searchDefaultLimit,omitempty"`
+	// maxSearchLimit is the hard upper bound the model can request via limit
+	// (1..50).
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=50
+	// +optional
+	MaxSearchLimit int32 `json:"maxSearchLimit,omitempty"`
 }
 
 // ProfileSpec declares one named hermes profile: a complete, independent agent

@@ -176,6 +176,37 @@ func hermesEnv(a *hermesv1alpha1.HermesAgent) []corev1.EnvVar {
 		if dashboardInsecure(a) {
 			env = append(env, corev1.EnvVar{Name: "HERMES_DASHBOARD_INSECURE", Value: "1"})
 		}
+		// Basic-auth provider (hermes >=v2026.6.5): the authenticated alternative
+		// to insecure-bind. A no-op until username is set; hash/signing-key come
+		// from Secrets so no plaintext is stored at rest.
+		if ba := a.Spec.Dashboard.BasicAuth; ba != nil && ba.Username != "" {
+			env = append(env, corev1.EnvVar{Name: "HERMES_DASHBOARD_BASIC_AUTH_USERNAME", Value: ba.Username})
+			if ref := ba.PasswordHashSecretRef; ref != nil {
+				env = append(env, corev1.EnvVar{
+					Name: "HERMES_DASHBOARD_BASIC_AUTH_PASSWORD_HASH",
+					ValueFrom: &corev1.EnvVarSource{
+						SecretKeyRef: &corev1.SecretKeySelector{
+							LocalObjectReference: corev1.LocalObjectReference{Name: ref.Name},
+							Key:                  ref.Key,
+						},
+					},
+				})
+			}
+			if ref := ba.SecretSecretRef; ref != nil {
+				env = append(env, corev1.EnvVar{
+					Name: "HERMES_DASHBOARD_BASIC_AUTH_SECRET",
+					ValueFrom: &corev1.EnvVarSource{
+						SecretKeyRef: &corev1.SecretKeySelector{
+							LocalObjectReference: corev1.LocalObjectReference{Name: ref.Name},
+							Key:                  ref.Key,
+						},
+					},
+				})
+			}
+			if ba.SessionTTLSeconds > 0 {
+				env = append(env, corev1.EnvVar{Name: "HERMES_DASHBOARD_BASIC_AUTH_TTL_SECONDS", Value: strconv.Itoa(int(ba.SessionTTLSeconds))})
+			}
+		}
 	}
 
 	// Webhook env for webhook-capable channels. The local listen port is set

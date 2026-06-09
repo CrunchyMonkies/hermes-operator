@@ -6,7 +6,7 @@
 #     --build-arg AGENT_IMAGE=harbor.bne1.ouchi.com.au/applications/hermes-agent:<tag> .
 
 # Global ARG so it is in scope for the final FROM below.
-ARG AGENT_IMAGE=harbor.bne1.ouchi.com.au/applications/hermes-agent:v2026.5.29.2
+ARG AGENT_IMAGE=harbor.bne1.ouchi.com.au/applications/hermes-agent:v2026.6.5
 
 FROM golang:1.26 AS builder
 ARG TARGETOS=linux

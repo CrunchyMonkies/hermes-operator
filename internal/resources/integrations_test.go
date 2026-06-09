@@ -75,6 +75,52 @@ func TestDashboardInsecureEnv(t *testing.T) {
 	}
 }
 
+func TestDashboardBasicAuthEnv(t *testing.T) {
+	// Configured basic_auth -> username literal + hash/secret from Secrets + TTL.
+	a := baseAgent()
+	a.Spec.Dashboard = hermesv1alpha1.DashboardSpec{
+		Enabled: true,
+		BasicAuth: &hermesv1alpha1.DashboardBasicAuthSpec{
+			Username:              "archer",
+			PasswordHashSecretRef: &hermesv1alpha1.SecretKeyRef{Name: "dash-auth", Key: "hash"},
+			SecretSecretRef:       &hermesv1alpha1.SecretKeyRef{Name: "dash-auth", Key: "signing"},
+			SessionTTLSeconds:     3600,
+		},
+	}
+	if v, fromSecret, ok := envByName(a, "HERMES_DASHBOARD_BASIC_AUTH_USERNAME"); !ok || v != "archer" || fromSecret {
+		t.Errorf("USERNAME = %q fromSecret=%v ok=%v, want literal \"archer\"", v, fromSecret, ok)
+	}
+	if _, fromSecret, ok := envByName(a, "HERMES_DASHBOARD_BASIC_AUTH_PASSWORD_HASH"); !ok || !fromSecret {
+		t.Errorf("PASSWORD_HASH should be sourced from a Secret (ok=%v fromSecret=%v)", ok, fromSecret)
+	}
+	if _, fromSecret, ok := envByName(a, "HERMES_DASHBOARD_BASIC_AUTH_SECRET"); !ok || !fromSecret {
+		t.Errorf("SECRET should be sourced from a Secret (ok=%v fromSecret=%v)", ok, fromSecret)
+	}
+	if v, _, ok := envByName(a, "HERMES_DASHBOARD_BASIC_AUTH_TTL_SECONDS"); !ok || v != "3600" {
+		t.Errorf("TTL_SECONDS = %q ok=%v, want \"3600\"", v, ok)
+	}
+
+	// Blank username -> provider is a no-op, no env at all.
+	b := baseAgent()
+	b.Spec.Dashboard = hermesv1alpha1.DashboardSpec{
+		Enabled:   true,
+		BasicAuth: &hermesv1alpha1.DashboardBasicAuthSpec{PasswordHashSecretRef: &hermesv1alpha1.SecretKeyRef{Name: "x", Key: "y"}},
+	}
+	if _, _, ok := envByName(b, "HERMES_DASHBOARD_BASIC_AUTH_USERNAME"); ok {
+		t.Error("basic_auth env must be absent when username is blank")
+	}
+
+	// Dashboard disabled -> never set.
+	c := baseAgent()
+	c.Spec.Dashboard = hermesv1alpha1.DashboardSpec{
+		Enabled:   false,
+		BasicAuth: &hermesv1alpha1.DashboardBasicAuthSpec{Username: "archer"},
+	}
+	if _, _, ok := envByName(c, "HERMES_DASHBOARD_BASIC_AUTH_USERNAME"); ok {
+		t.Error("basic_auth env must be absent when dashboard is disabled")
+	}
+}
+
 func TestProviderKeyInjection(t *testing.T) {
 	a := baseAgent()
 	a.Spec.DefaultProfile.Model.Providers = []hermesv1alpha1.ProviderSpec{

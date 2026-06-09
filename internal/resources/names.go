@@ -16,7 +16,7 @@ limitations under the License.
 
 // Package resources renders the Kubernetes child objects for a HermesAgent.
 // Builders are pure functions; the controller sets owner references and applies
-// them. Verified upstream paths/ports (tag v2026.5.29.2) live as constants here.
+// them. Verified upstream paths/ports (tag v2026.6.5) live as constants here.
 package resources
 
 import (
@@ -102,7 +102,7 @@ const (
 	// pip installs (spec.packages.pip, plus honcho-ai when honcho is in use) go
 	// into the python user-site on the shared PVC's dotlocal subPath via the
 	// pip-install init container. Path is pinned to the hermes python (3.13 at tag
-	// v2026.5.29.2; re-verify when bumping the pin).
+	// v2026.6.5; re-verify when bumping the pin).
 	DefaultPipImage   = "python:3.13-slim"
 	PipSitePackages   = DotLocalPath + "/lib/python3.13/site-packages"
 	HonchoPackageSpec = "honcho-ai==2.0.1"

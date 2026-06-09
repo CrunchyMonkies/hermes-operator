@@ -5,7 +5,7 @@ A Kubernetes operator (Go) for deploying and managing
 gateways declaratively via a `HermesAgent` Custom Resource.
 
 > Full design: [`docs/specification.md`](docs/specification.md). Pinned upstream:
-> Hermes Agent `v2026.5.29.2` (vendored at `third_party/hermes-agent`).
+> Hermes Agent `v2026.6.5` (vendored at `third_party/hermes-agent`).
 
 ## What it does
 
@@ -318,7 +318,7 @@ metadata:
   name: claude-bot
   namespace: agents
 spec:
-  image: harbor.bne1.ouchi.com.au/applications/hermes-agent:v2026.5.29.2
+  image: harbor.bne1.ouchi.com.au/applications/hermes-agent:v2026.6.5
   imagePullSecrets: [{ name: harbor-pull }]
   storage: { size: 20Gi, storageClassName: fast-ssd }
   model:
@@ -481,7 +481,7 @@ cmd/operator, cmd/reloader/   # the two binaries
 images/{operator,agent,reloader}/
 config/                       # kustomize (crd, rbac, manager, samples)
 charts/hermes-operator/       # Helm chart (CRDs + RBAC + manager)
-third_party/hermes-agent/     # upstream submodule @ v2026.5.29.2
+third_party/hermes-agent/     # upstream submodule @ v2026.6.5
 ```
 
 ## Develop

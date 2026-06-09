@@ -218,6 +218,61 @@ spec:
               dashboard:
                 description: DashboardSpec controls the web dashboard (port 9119).
                 properties:
+                  basicAuth:
+                    description: |-
+                      basicAuth configures the dashboard's bundled username/password gate
+                      (the `dashboard_auth/basic` provider, hermes >=v2026.6.5). It is the
+                      authenticated alternative to insecure-bind: set this instead of
+                      insecure=true when exposing the dashboard through Ingress and you want a
+                      password rather than no auth gate. Maps to the HERMES_DASHBOARD_BASIC_AUTH_*
+                      env vars. A no-op until username is set.
+                    properties:
+                      passwordHashSecretRef:
+                        description: |-
+                          passwordHashSecretRef supplies HERMES_DASHBOARD_BASIC_AUTH_PASSWORD_HASH
+                          (a scrypt hash, e.g. `scrypt$...`; no plaintext at rest). Preferred over a
+                          plaintext password. Compute with the upstream
+                          `plugins.dashboard_auth.basic.hash_password` helper.
+                        properties:
+                          key:
+                            description: key within the Secret holding the value.
+                            type: string
+                          name:
+                            description: name of the Secret.
+                            type: string
+                        required:
+                        - key
+                        - name
+                        type: object
+                      secretSecretRef:
+                        description: |-
+                          secretSecretRef supplies HERMES_DASHBOARD_BASIC_AUTH_SECRET, the HMAC key
+                          that signs session tokens. Leave unset for a random per-process key
+                          (sessions then don't survive a restart); set a stable 32+ byte key for
+                          restart-surviving sessions.
+                        properties:
+                          key:
+                            description: key within the Secret holding the value.
+                            type: string
+                          name:
+                            description: name of the Secret.
+                            type: string
+                        required:
+                        - key
+                        - name
+                        type: object
+                      sessionTTLSeconds:
+                        description: |-
+                          sessionTTLSeconds sets HERMES_DASHBOARD_BASIC_AUTH_TTL_SECONDS. 0 (the
+                          default) uses the plugin default (12h).
+                        format: int32
+                        type: integer
+                      username:
+                        description: |-
+                          username for the dashboard login. Blank (the default) leaves the provider
+                          a no-op. Sets HERMES_DASHBOARD_BASIC_AUTH_USERNAME.
+                        type: string
+                    type: object
                   enabled:
                     default: false
                     type: boolean
@@ -618,7 +673,7 @@ spec:
                       apiMode:
                         description: |-
                           apiMode selects the wire protocol/transport for the endpoint. Optional: same
-                          inheritance as baseURL. Known values at tag v2026.5.29.2: chat_completions,
+                          inheritance as baseURL. Known values at tag v2026.6.5: chat_completions,
                           anthropic_messages, codex_responses, bedrock_converse (re-verify on tag bump).
                           -> model.api_mode
                         type: string
@@ -1019,6 +1074,91 @@ spec:
                       soul renders to this profile's SOUL.md (persona; also the discovery marker
                       for named profiles).
                     type: string
+                  streaming:
+                    description: |-
+                      streaming configures real-time token streaming to messaging platforms
+                      (config.yaml `streaming`, hermes >=v2026.6.5).
+                    properties:
+                      bufferThreshold:
+                        description: bufferThreshold flushes the buffer once this
+                          many characters accumulate.
+                        format: int32
+                        type: integer
+                      cursor:
+                        description: cursor is the glyph appended to the in-progress
+                          message while streaming.
+                        type: string
+                      editInterval:
+                        description: |-
+                          editInterval is the minimum seconds between progressive edits (float, e.g.
+                          "0.8"). Stored as a string to preserve fractional values.
+                        type: string
+                      enabled:
+                        description: |-
+                          enabled is the master switch. When false (the default) each response is
+                          delivered as a single final message.
+                        type: boolean
+                      freshFinalAfterSeconds:
+                        description: |-
+                          freshFinalAfterSeconds (float, e.g. "60") delivers the final edit of a
+                          long-running streamed response as a fresh message once the preview has been
+                          visible at least this long (Telegram only). Stored as a string.
+                        type: string
+                      transport:
+                        description: |-
+                          transport selects the streaming mechanism: auto (prefer native drafts,
+                          fall back to edits), draft, edit, or off.
+                        enum:
+                        - auto
+                        - draft
+                        - edit
+                        - "off"
+                        type: string
+                    type: object
+                  tools:
+                    description: |-
+                      tools configures the model-facing tool surface (config.yaml `tools`,
+                      hermes >=v2026.6.5) — currently progressive tool-schema disclosure.
+                    properties:
+                      toolSearch:
+                        description: |-
+                          toolSearch enables progressive tool-schema disclosure, replacing many
+                          deferrable tool schemas with tool_search/tool_describe/tool_call bridges.
+                        properties:
+                          enabled:
+                            description: |-
+                              enabled: "auto" (activate only when deferrable schemas exceed thresholdPct
+                              of the model context), "on" (always when there is a deferrable tool), or
+                              "off".
+                            enum:
+                            - auto
+                            - "on"
+                            - "off"
+                            type: string
+                          maxSearchLimit:
+                            description: |-
+                              maxSearchLimit is the hard upper bound the model can request via limit
+                              (1..50).
+                            format: int32
+                            maximum: 50
+                            minimum: 1
+                            type: integer
+                          searchDefaultLimit:
+                            description: |-
+                              searchDefaultLimit is how many hits tool_search returns without an explicit
+                              limit argument.
+                            format: int32
+                            type: integer
+                          thresholdPct:
+                            description: |-
+                              thresholdPct is the percentage of context length at which "auto" mode kicks
+                              in (0..100).
+                            format: int32
+                            maximum: 100
+                            minimum: 0
+                            type: integer
+                        type: object
+                    type: object
                 type: object
                 x-kubernetes-validations:
                 - message: each skills.custom entry must set exactly one of sourceRef
@@ -10324,7 +10464,7 @@ spec:
                         apiMode:
                           description: |-
                             apiMode selects the wire protocol/transport for the endpoint. Optional: same
-                            inheritance as baseURL. Known values at tag v2026.5.29.2: chat_completions,
+                            inheritance as baseURL. Known values at tag v2026.6.5: chat_completions,
                             anthropic_messages, codex_responses, bedrock_converse (re-verify on tag bump).
                             -> model.api_mode
                           type: string
@@ -10734,6 +10874,91 @@ spec:
                         soul renders to this profile's SOUL.md (persona; also the discovery marker
                         for named profiles).
                       type: string
+                    streaming:
+                      description: |-
+                        streaming configures real-time token streaming to messaging platforms
+                        (config.yaml `streaming`, hermes >=v2026.6.5).
+                      properties:
+                        bufferThreshold:
+                          description: bufferThreshold flushes the buffer once this
+                            many characters accumulate.
+                          format: int32
+                          type: integer
+                        cursor:
+                          description: cursor is the glyph appended to the in-progress
+                            message while streaming.
+                          type: string
+                        editInterval:
+                          description: |-
+                            editInterval is the minimum seconds between progressive edits (float, e.g.
+                            "0.8"). Stored as a string to preserve fractional values.
+                          type: string
+                        enabled:
+                          description: |-
+                            enabled is the master switch. When false (the default) each response is
+                            delivered as a single final message.
+                          type: boolean
+                        freshFinalAfterSeconds:
+                          description: |-
+                            freshFinalAfterSeconds (float, e.g. "60") delivers the final edit of a
+                            long-running streamed response as a fresh message once the preview has been
+                            visible at least this long (Telegram only). Stored as a string.
+                          type: string
+                        transport:
+                          description: |-
+                            transport selects the streaming mechanism: auto (prefer native drafts,
+                            fall back to edits), draft, edit, or off.
+                          enum:
+                          - auto
+                          - draft
+                          - edit
+                          - "off"
+                          type: string
+                      type: object
+                    tools:
+                      description: |-
+                        tools configures the model-facing tool surface (config.yaml `tools`,
+                        hermes >=v2026.6.5) — currently progressive tool-schema disclosure.
+                      properties:
+                        toolSearch:
+                          description: |-
+                            toolSearch enables progressive tool-schema disclosure, replacing many
+                            deferrable tool schemas with tool_search/tool_describe/tool_call bridges.
+                          properties:
+                            enabled:
+                              description: |-
+                                enabled: "auto" (activate only when deferrable schemas exceed thresholdPct
+                                of the model context), "on" (always when there is a deferrable tool), or
+                                "off".
+                              enum:
+                              - auto
+                              - "on"
+                              - "off"
+                              type: string
+                            maxSearchLimit:
+                              description: |-
+                                maxSearchLimit is the hard upper bound the model can request via limit
+                                (1..50).
+                              format: int32
+                              maximum: 50
+                              minimum: 1
+                              type: integer
+                            searchDefaultLimit:
+                              description: |-
+                                searchDefaultLimit is how many hits tool_search returns without an explicit
+                                limit argument.
+                              format: int32
+                              type: integer
+                            thresholdPct:
+                              description: |-
+                                thresholdPct is the percentage of context length at which "auto" mode kicks
+                                in (0..100).
+                              format: int32
+                              maximum: 100
+                              minimum: 0
+                              type: integer
+                          type: object
+                      type: object
                   required:
                   - name
                   type: object

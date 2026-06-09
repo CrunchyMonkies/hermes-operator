@@ -6,7 +6,7 @@
 
 Status: **Draft** · Target: greenfield (`hermes-operator`) · Owner: matthew
 
-**Pinned upstream:** Hermes Agent `v2026.5.29.2` (release v0.15.2, commit `77a1650c7`),
+**Pinned upstream:** Hermes Agent `v2026.6.5` (release v0.16.0, commit `3c231eb39`),
 vendored at `third_party/hermes-agent` as a git submodule. All concrete claims
 below (env vars, ports, file paths, config keys) are verified against that tag's
 source — primarily `Dockerfile`, `docker/entrypoint.sh`, `cli-config.yaml.example`,
@@ -150,7 +150,7 @@ kind: HermesAgent
 metadata:
   name: research-bot
 spec:
-  image: harbor.bne1.ouchi.com.au/applications/hermes-agent:v2026.5.29.2
+  image: harbor.bne1.ouchi.com.au/applications/hermes-agent:v2026.6.5
   imagePullPolicy: IfNotPresent
   imagePullSecrets: [{ name: harbor-pull }]
 
@@ -717,13 +717,13 @@ Three components, each with its own Dockerfile, built and **pushed to
 | Component | Image | Contents |
 | --- | --- | --- |
 | **Operator** | `harbor.bne1.ouchi.com.au/applications/hermes-operator` | Go controller-manager (distroless/static). |
-| **Agent** | `harbor.bne1.ouchi.com.au/applications/hermes-agent` | `FROM nousresearch/hermes-agent:v2026.5.29.2` + Homebrew dist at `/opt/homebrew-dist` + HOMEBREW_* env + an s6-overlay cont-init hook (`00-hermes-apt`) for root apt install (inherits upstream's `/init` ENTRYPOINT) + embedded `package-management` skill. |
+| **Agent** | `harbor.bne1.ouchi.com.au/applications/hermes-agent` | `FROM nousresearch/hermes-agent:v2026.6.5` + Homebrew dist at `/opt/homebrew-dist` + HOMEBREW_* env + an s6-overlay cont-init hook (`00-hermes-apt`) for root apt install (inherits upstream's `/init` ENTRYPOINT) + embedded `package-management` skill. |
 | **Reloader** | `harbor.bne1.ouchi.com.au/applications/hermes-reloader` | Small Go (or Python) binary; runs as in-pod sidecar (§8). May reuse the agent image to get `hermes`/`brew` on PATH, or a slim image that execs into the agent container. |
 
 ### 9.1 Build & push
 - `make docker-build docker-push IMG_REGISTRY=harbor.bne1.ouchi.com.au/applications`
   builds/pushes all three with a shared version tag (default = operator release;
-  agent also tagged with the upstream `v2026.5.29.2` it derives from).
+  agent also tagged with the upstream `v2026.6.5` it derives from).
 - Multi-arch via `docker buildx` (`linux/amd64`, `linux/arm64`).
 - Requires Harbor credentials (`docker login harbor.bne1.ouchi.com.au`); CI uses
   a robot account. Image pull in-cluster uses `imagePullSecrets` (`harbor-pull`).
@@ -745,7 +745,7 @@ hermes-operator/
 ├── charts/
 │   ├── hermes-operator/          # installs the operator (CRDs + RBAC + manager)
 │   └── hermes-agent/             # renders a HermesAgent CR (+ Secret) for app teams
-├── third_party/hermes-agent/     # submodule @ v2026.5.29.2
+├── third_party/hermes-agent/     # submodule @ v2026.6.5
 ├── Makefile · docs/{brief,specification}.md
 ```
 
@@ -795,7 +795,7 @@ deploy agents without writing raw CRs.
 ```yaml
 # values.yaml (agent chart) — keys map 1:1 to HermesAgent.spec
 fullnameOverride: ""
-image: harbor.bne1.ouchi.com.au/applications/hermes-agent:v2026.5.29.2
+image: harbor.bne1.ouchi.com.au/applications/hermes-agent:v2026.6.5
 model: { default: anthropic/claude-opus-4.6, provider: auto }
 storage: { size: 20Gi, storageClassName: "", reclaimPolicy: Retain }
 apiServer:
@@ -1022,7 +1022,7 @@ schema — upstream tracks **`_config_version`** (23 at the pinned tag) and ship
 
 ### 14.3 Operator ↔ agent skew
 The operator pins a **tested upstream tag** as the default `spec.image` (the
-`third_party/hermes-agent` submodule, currently `v2026.5.29.2`) and runs
+`third_party/hermes-agent` submodule, currently `v2026.6.5`) and runs
 config-rendering tests against that exact `cli-config.yaml.example`. Users may
 override `spec.image` to a different tag; the validator warns when the image tag
 differs from the operator's tested baseline (skew is allowed but flagged), and

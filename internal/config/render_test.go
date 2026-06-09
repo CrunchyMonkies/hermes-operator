@@ -224,6 +224,71 @@ func TestRenderTypedKeys(t *testing.T) {
 	}
 }
 
+func TestRenderStreamingAndToolSearch(t *testing.T) {
+	pc := &hermesv1alpha1.ProfileConfig{
+		Streaming: hermesv1alpha1.StreamingSpec{
+			Enabled:                ptrBool(true),
+			Transport:              "auto",
+			EditInterval:           ptrStr("0.8"),
+			BufferThreshold:        24,
+			Cursor:                 " ▉",
+			FreshFinalAfterSeconds: ptrStr("60"),
+		},
+		Tools: hermesv1alpha1.ToolsSpec{
+			ToolSearch: &hermesv1alpha1.ToolSearchSpec{
+				Enabled:            "auto",
+				ThresholdPct:       10,
+				SearchDefaultLimit: 5,
+				MaxSearchLimit:     20,
+			},
+		},
+	}
+
+	got := mustParse(t, mustRender(t, pc))
+
+	streaming, ok := got["streaming"].(map[string]any)
+	if !ok {
+		t.Fatalf("streaming section missing: %v", got["streaming"])
+	}
+	if streaming["enabled"] != true {
+		t.Errorf("streaming.enabled = %v, want true", streaming["enabled"])
+	}
+	if streaming["transport"] != "auto" {
+		t.Errorf("streaming.transport = %v, want auto", streaming["transport"])
+	}
+	if streaming["edit_interval"].(float64) != 0.8 {
+		t.Errorf("streaming.edit_interval = %v, want 0.8", streaming["edit_interval"])
+	}
+	if streaming["buffer_threshold"].(float64) != 24 {
+		t.Errorf("streaming.buffer_threshold = %v, want 24", streaming["buffer_threshold"])
+	}
+
+	tools, ok := got["tools"].(map[string]any)
+	if !ok {
+		t.Fatalf("tools section missing: %v", got["tools"])
+	}
+	toolSearch := tools["tool_search"].(map[string]any)
+	if toolSearch["enabled"] != "auto" {
+		t.Errorf("tools.tool_search.enabled = %v, want auto", toolSearch["enabled"])
+	}
+	if toolSearch["threshold_pct"].(float64) != 10 {
+		t.Errorf("tools.tool_search.threshold_pct = %v, want 10", toolSearch["threshold_pct"])
+	}
+	if toolSearch["max_search_limit"].(float64) != 20 {
+		t.Errorf("tools.tool_search.max_search_limit = %v, want 20", toolSearch["max_search_limit"])
+	}
+}
+
+func TestRenderStreamingAndToolSearchOmittedWhenEmpty(t *testing.T) {
+	got := mustParse(t, mustRender(t, &hermesv1alpha1.ProfileConfig{}))
+	if _, ok := got["streaming"]; ok {
+		t.Errorf("streaming should be omitted when unset, got %v", got["streaming"])
+	}
+	if _, ok := got["tools"]; ok {
+		t.Errorf("tools should be omitted when unset, got %v", got["tools"])
+	}
+}
+
 func TestKubeconfigDockerVolumesRendered(t *testing.T) {
 	pc := &hermesv1alpha1.ProfileConfig{
 		Runtime: hermesv1alpha1.RuntimeSpec{TerminalBackend: "docker"},
